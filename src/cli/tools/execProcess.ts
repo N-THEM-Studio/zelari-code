@@ -26,9 +26,10 @@
  * network posture comes from the SAME resourceClaims decision as the
  * permission layer (hosts whose claim resolved to `allow`).
  *
- * Windows note: direct spawn like the bash tool's win32 branch — plain .exe
- * binaries on PATH work; `.cmd`/`.bat` shims may need the full path (no
- * shell indirection exists here to resolve them).
+ * Windows note: plain .exe binaries on PATH spawn directly. `npm`/`npx` are
+ * `.cmd` shims Node will not spawn without a shell, so they run as
+ * `node <npm>/bin/npm-cli.js` (windowsProgram.ts); any other `.cmd`/`.bat` is
+ * refused up front with the fix instead of a bare ENOENT/EINVAL.
  */
 
 import { z } from 'zod';
@@ -39,6 +40,7 @@ import { resolveSandboxedPath, SandboxViolationError } from '../safety/sandboxPa
 import { buildJailSpec, jailAvailability, networkSpecFromClaimHosts, spawnJailed, type JailNetwork } from '../safety/osJail.js';
 // WS7 slice 4 (t139): `jail.blocked` on the spine when the OS jail refuses.
 import { emitJailBlocked } from '../safety/decisionEmit.js';
+import { resolveWindowsProgram } from './windowsProgram.js';
 
 export const execProcessInputSchema = z.object({
   /** Program to execute: bare name resolved via PATH, or an absolute path. */
@@ -108,6 +110,17 @@ export function createExecProcessTool(
       if (selfKill.blocked && selfKill.message) {
         return typedErr(`[self-kill] exec_process refused: ${selfKill.message}`);
       }
+      // Windows .cmd shims: npm/npx become node + their CLI script (no shell);
+      // any other shim is refused with the fix before spawning.
+      const winProgram = resolveWindowsProgram(input.program, argv);
+      if (winProgram.kind === 'shim') {
+        return typedErr(
+          `exec_process runs programs without a shell, and on Windows ${input.program} is a .cmd/.bat shim ` +
+            `(${winProgram.path}) that cannot start that way. Run it with the bash tool instead.`,
+        );
+      }
+      const program = winProgram.kind === 'node-script' ? winProgram.program : input.program;
+      const spawnArgv = winProgram.kind === 'node-script' ? winProgram.argv : argv;
       let cwd: string;
       try {
         // Absolute-inside-root or root-relative only — the child starts in
@@ -123,8 +136,8 @@ export function createExecProcessTool(
         // this path never touches child_process directly.
         const spec = { ...baseSpec, network: opts.resolveNetwork?.(input) ?? baseSpec.network };
         const res = spawnJailed(spec, {
-          program: input.program,
-          argv,
+          program,
+          argv: spawnArgv,
           cwd,
           signal: ctx?.signal,
           env: process.env,
