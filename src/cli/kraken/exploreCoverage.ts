@@ -45,6 +45,16 @@ export const TENTACLE_SIDECAR_SEGMENTS = ['.zelari', 'radio', 'tentacles'] as co
 /** Per-sidecar cap: enough for a real conclusion, small enough to not be a log. */
 const SIDECAR_CAP_CHARS = 16 * 1024;
 
+/**
+ * W6.1 (post-mortem 2026-09-23): why a terminal tentacle stopped. `ok` is a
+ * completed run (the full conclusion); `interrupted` a kill/cancel (task-tool
+ * wall clock, watchdog, user Stop); `failed` a run that errored out.
+ */
+export type TentacleSidecarStatus = 'ok' | 'interrupted' | 'failed';
+
+/** W6.1: first body line of every non-ok sidecar (stable, parseable). */
+export const SIDECAR_INTERRUPTED_MARKER = '[interrupted]';
+
 export interface TentacleSidecarInfo {
   agent: string;
   /**
@@ -58,6 +68,8 @@ export interface TentacleSidecarInfo {
   durationMs?: number;
   result: string;
   worktree?: string | null;
+  /** W6.1: absent ⇒ 'ok' (pre-W6.1 sidecars and normal runs stay valid). */
+  status?: TentacleSidecarStatus;
 }
 
 /** Filesystem-safe, length-bounded id for sidecar names. */
@@ -69,8 +81,11 @@ export function sanitizeNodeId(id: string): string {
  * C1 — persist a tentacle's full conclusion. Fail-open by design: the
  * sidecar is an observability extra, never a dependency of the run.
  *
- * The header grows only additively (`thoroughness:` line, C4): old sidecars
- * stay parseable, and a reader that does not know the line ignores it.
+ * The header grows only additively (`thoroughness:` line C4, `status:` line
+ * W6.1): old sidecars stay parseable, and a reader that does not know a line
+ * ignores it. W6.1 also accepts a PARTIAL result: on a non-ok status the body
+ * is marked `[interrupted]` on its first line, so a reader (and the coverage
+ * metric) can tell a partial transcript from a conclusion without the header.
  */
 export async function writeTentacleSidecar(
   cwd: string,
@@ -88,14 +103,21 @@ export async function writeTentacleSidecar(
       info.model ? `model: ${info.model}` : null,
       typeof info.durationMs === 'number' ? `durationMs: ${info.durationMs}` : null,
       info.worktree ? `worktree: ${info.worktree}` : null,
+      // W6.1: additive header line — old readers ignore it.
+      info.status && info.status !== 'ok' ? `status: ${info.status}` : null,
       '',
     ]
       .filter((line): line is string => line !== null)
       .join('\n');
-    const body =
+    const capped =
       info.result.length > SIDECAR_CAP_CHARS
         ? info.result.slice(0, SIDECAR_CAP_CHARS)
         : info.result;
+    // W6.1: a non-ok sidecar announces itself on the first body line.
+    const body =
+      info.status && info.status !== 'ok'
+        ? `${SIDECAR_INTERRUPTED_MARKER}\n${capped}`
+        : capped;
     await writeFile(path.join(dir, `${sanitizeNodeId(nodeId)}.md`), `${header}\n${body}\n`, 'utf8');
   } catch {
     /* fail-open */

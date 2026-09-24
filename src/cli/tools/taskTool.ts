@@ -2144,6 +2144,32 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   const reportStatus: ReportStatus = reportStatusOf(reportTruncated);
   const durationMs = Date.now() - started;
 
+  // W6.1 (post-mortem 2026-09-23): every non-success terminal path below
+  // flushes the PARTIAL transcript as a sidecar before it goes silent. Before
+  // this, a killed tentacle (task-tool wall clock / watchdog / user Stop)
+  // left NO sidecar at all — the exact observability hole the 45-minute
+  // incident left behind (the killed `general` had no trace file; only the
+  // explore's did). Fail-open, same contract as the success-path sidecar.
+  const persistPartialSidecar = async (
+    status: 'interrupted' | 'failed',
+    partial: string,
+  ): Promise<void> => {
+    try {
+      const { writeTentacleSidecar } = await import('../kraken/exploreCoverage.js');
+      await writeTentacleSidecar(parentCwd, sessionId, opts.nodeId ?? liveId, {
+        agent,
+        thoroughness,
+        model: sub?.model,
+        durationMs,
+        result: partial,
+        status,
+        worktree: worktree?.path ?? null,
+      });
+    } catch {
+      /* fail-open: the sidecar is best-effort */
+    }
+  };
+
   if (aborted) {
     // Parent AbortSignal fired: user Stop, Desktop idle watchdog
     // (session.cancel reason=turn_timeout), or the task-tool wall clock.
@@ -2167,6 +2193,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       detail: 'cancelled',
       durationMs,
     });
+    // W6.1: this kill used to leave no trace — flush what we have.
+    await persistPartialSidecar('interrupted', (result ?? '').trim());
     return {
       ok: false,
       agent,
@@ -2202,6 +2230,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       partial.length > DEGENERATE_PARTIAL_MAX
         ? `${partial.slice(0, DEGENERATE_PARTIAL_MAX)}…`
         : partial;
+    // W6.1: the partial is now durable on disk too, not just in the error.
+    await persistPartialSidecar('interrupted', partial);
     return {
       ok: false,
       agent,
@@ -2233,6 +2263,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       ok: false,
     });
     endTentacle(liveId, { ok: false, model: sub.model, detail: reason, durationMs });
+    // W6.1: the storm's trail (what kept failing) is worth a trace too.
+    await persistPartialSidecar('failed', (result ?? '').trim());
     return {
       ok: false,
       agent,
@@ -2256,6 +2288,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       ok: false,
     });
     endTentacle(liveId, { ok: false, model: sub.model, detail: error, durationMs });
+    // W6.1: even with no output the STOP must leave a trace (why it died).
+    await persistPartialSidecar('failed', (error ?? '').trim());
     return {
       ok: false,
       agent,

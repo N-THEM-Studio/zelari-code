@@ -155,6 +155,15 @@ Ogni task: **Gap → Meccanismo → Accettazione**. Convenzioni repo: file ≤30
 - **K5.4 Diagnostica muta** (F29+F30) ✅ *atterrato* (`17a2ad5`; label codice K5.2(F29)/K5.3(F30) — `evidence.not_anchored` + `pack_error`, test dedicati). log della causa sul catch del pack; evento spine esplicito per evidence non ancorabile.
 - **K5.5 Igiene doc/wiring** (F33) ✅ *atterrato* (`d7d81ad`): v1 plan → marker SUPERSEDED ✓, ref ADR-0015→0035 in `traceStore.ts` (+4 ricorrenze in `zelariMission.ts`) ✓, `scriptPlanner` → marcato EXPERIMENTAL ✓; nota t52 saltata (vault `.zelari`, non product).
 
+### W6 — Harness resilience (post-mortem 2026-09-23, "il turno dei 45 minuti") (medio)
+
+Post-mortem: 2 cause impilate — (a) report explore troncato usato come base per uno spawn doomed (K5.2 già implementata), (b) storm I/O + `EACCES` sul worktree — amplificate dall'assenza di early-abort: il tentacolo `general` ha girato in retry-storm fino al kill al cap 2700s esatti (`cancelled by parent`), con transcript perso. Lezioni: mai spawnare su report senza conclusione; non bruciare il cap su storm di failure; non perdere la traccia al kill.
+
+- **W6/G1 Circuit-breaker su storm di mutation fallite** ✅ *atterrato* (`9877c72`): 4 failure consecutive su `write_file`/`edit`/`apply_diff` (+ `mcp_filesystem_*`) ⇒ stop immediato `mutation_storm`; reset su mutation riuscita. `src/cli/tools/mutationGuard.ts`.
+- **W6/G2 Marker report troncato** ✅ *atterrato* (`9877c72`): `reportStatus: 'truncated' | 'ok'` derivato solo da fatti runtime (`finishReason === 'length'`, stream senza sigillo `message_end`, fatal mid-message) + guard line al parent. `src/cli/tools/subagentReportStatus.ts`.
+- **W6.1 Flush transcript al kill/cancel** *(in corso)*: il sidecar `.zelari/radio/tentacles/<sessionId>/<nodeId>.md` viene scritto solo a fine run riuscita ⇒ al kill la traccia sparisce (caso reale: sidecar `t8` dell'explore sì, del `general` no). Persistere il parziale accumulato anche su timeout/cancel/failure, marcato `[interrupted]`.
+- **W6.2 (opzionale) Enforcement runtime**: veto di spawn su report non conclusivo (oggi il segnale G2 esiste, il gate decisionale resta al lead).
+
 ---
 
 ## 4. Sequenza e dipendenze
@@ -164,6 +173,7 @@ Wave 1  W1 (K1.1–K1.8)           ← prima di tutto: nessun falso verde
 Wave 2  W2 (K2.1–K2.5) ∥ W3      ← write integrity + robustezza (indipendenti)
 Wave 3  W4 (K4.1–K4.6)           ← quality floor del canale modello
 Wave 4  W5 (K5.1–K5.5)           ← misura, hook, flip data-gated, igenie
+Wave 5  W6 (G1, G2, W6.1[, W6.2]) ← harness resilience (post-mortem 09-23)
 ```
 
 - K1.3 dipende da nulla (i required-checks esistono); K1.2 tocca `verificationBridge` — coordinare con K1.1 nello stesso file.

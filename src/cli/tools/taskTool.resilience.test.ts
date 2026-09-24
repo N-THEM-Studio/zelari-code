@@ -235,3 +235,67 @@ describe('G2 (2026-09-23) — truncated-report signal wiring', () => {
     expect(res.result).toContain('finish-reason-length');
   });
 });
+
+describe('W6.1 (2026-09-23) — partial-transcript flush on non-success exits', () => {
+  /** The one sidecar written for a tentacle, as raw text. */
+  const sidecarBody = (sessionId: string): string => {
+    const dirPath = path.join(dir, '.zelari', 'radio', 'tentacles', sessionId);
+    const files = fs.readdirSync(dirPath).filter((f) => f.endsWith('.md'));
+    expect(files.length).toBe(1);
+    return fs.readFileSync(path.join(dirPath, files[0]!), 'utf8');
+  };
+
+  const executeTool = async (
+    script: BrainEvent[],
+    sessionId: string,
+    agent: 'explore' | 'general' = 'explore',
+  ) => {
+    const tool = createTaskTool(depsFor(script));
+    return (await (tool as { execute: (a: unknown, c: unknown) => Promise<unknown> }).execute(
+      { agent, prompt: 'mappa il modulo auth', description: `w61 ${sessionId}` },
+      { sessionId, cwd: dir },
+    )) as { ok: boolean; error?: unknown; value?: { result: string } };
+  };
+
+  it('a no-output failure flushes a sidecar marked [interrupted] (trace before silence)', async () => {
+    // Harness that emits NOTHING: the exact "produced no output" failure path.
+    const res = await executeTool([], 'w61-nooutput');
+    expect(res.ok).toBe(false);
+    const body = sidecarBody('w61-nooutput');
+    expect(body).toContain('[interrupted]');
+    expect(body).toContain('status: failed');
+  });
+
+  it('a mutation-storm stop flushes its trail too', async () => {
+    const script: BrainEvent[] = [
+      mk({ type: 'message_start' }),
+      mk({ type: 'message_delta', delta: 'provo a scrivere…' }),
+      mk({ type: 'message_end', finishReason: 'tool_calls' }),
+      ...failedWrite('s0', 'write_file', 'EACCES: permission denied, open src/a.ts'),
+      ...failedWrite('s1', 'edit', 'edit: stale_snapshot: src/a.ts (expected aaaa, actual bbbb)'),
+      ...failedWrite('s2', 'write_file', 'EACCES: permission denied, open src/a.ts'),
+      ...failedWrite('s3', 'edit', 'edit: stale_snapshot: src/a.ts (expected aaaa, actual bbbb)'),
+    ];
+    const res = await executeTool(script, 'w61-storm', 'general');
+    expect(res.ok).toBe(false);
+    const body = sidecarBody('w61-storm');
+    expect(body).toContain('[interrupted]');
+    expect(body).toContain('status: failed');
+  });
+
+  it('a clean run writes the sidecar WITHOUT the marker (default unchanged)', async () => {
+    const res = await executeTool(
+      [
+        mk({ type: 'message_start' }),
+        mk({ type: 'message_delta', delta: 'Conclusione completa e verificata.' }),
+        mk({ type: 'message_end', finishReason: 'stop' }),
+      ],
+      'w61-ok',
+    );
+    expect(res.ok).toBe(true);
+    const body = sidecarBody('w61-ok');
+    expect(body).toContain('Conclusione completa e verificata.');
+    expect(body).not.toContain('[interrupted]');
+    expect(body).not.toContain('status:');
+  });
+});
