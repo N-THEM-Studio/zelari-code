@@ -1,5 +1,5 @@
 /**
- * toolOffload — keep rarely used tool schemas out of every request (flagged).
+ * toolOffload — keep rarely used tool schemas out of every request.
  *
  * Tool schemas ride on EVERY request. The 2026-09 token audit (736 real user
  * turns) found 37 built-in schemas (~8.4K tokens) plus 52 MCP schemas
@@ -7,8 +7,8 @@
  * turns — ten built-ins never, the MCP filesystem tools mostly as
  * duplicates of read_file/edit/write_file.
  *
- * With `ZELARI_TOOL_OFFLOAD=1` the request carries only the tools real turns
- * use (≥ ~1% of turns, or a mode depends on them) plus ONE dispatcher,
+ * By default (`ZELARI_TOOL_OFFLOAD=0` opts out) the request carries only the
+ * tools real turns use (≥ ~1% of turns, or a mode depends on them) plus ONE dispatcher,
  * `use_tool`. The rest stay registered: the system prompt names them, and
  * `use_tool` returns a schema on request and runs the tool through
  * `ToolRegistry.invoke` — the same choke-point (phase gate, sandbox,
@@ -23,8 +23,10 @@ import type { AgentToolSpec } from '@zelari/core/harness';
 import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import { typedErr, typedOk, type ToolDefinition } from '@zelari/core/harness/tools/toolTypes';
 
+/** Default ON; `0` / `false` / `no` / `off` keep every schema in the request. */
 export function isToolOffloadEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.ZELARI_TOOL_OFFLOAD ?? '').trim() === '1';
+  const v = (env.ZELARI_TOOL_OFFLOAD ?? '').trim().toLowerCase();
+  return !['0', 'false', 'no', 'off'].includes(v);
 }
 
 /**

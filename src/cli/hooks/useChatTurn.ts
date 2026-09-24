@@ -8,6 +8,7 @@ import { ingestLiveEvent } from "./observationStore.js";
 import { MetricsLogger, getMetricsLogger, recordCompactionMetrics } from "../metrics.js";
 import { recordMessageUsage } from "../budget/messageUsage.js";
 import { withRequestComposition, type RequestComposition } from "../budget/requestComposition.js";
+import { createUseToolTool, isToolOffloadEnabled, planToolOffload, USE_TOOL_NAME } from "../tools/toolOffload.js";
 import type { BrainContextMetricsEvent } from "@zelari/core/events";
 import { calculateCost } from "../modelPricing.js";
 import {
@@ -706,7 +707,26 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         }
         // NOTE: computed AFTER the workspace wiring so updateTask (when
         // registered) is advertised in the # Available Tools section too.
-        const openAiTools = toolRegistry.toOpenAITools();
+        let openAiTools = toolRegistry.toOpenAITools();
+        // Tool offload (default on; ZELARI_TOOL_OFFLOAD=0 disables): rarely
+        // used and MCP schemas leave the request and stay reachable through
+        // `use_tool`, named in a stable "More tools" paragraph.
+        let toolOffloadPointer = "";
+        if (isToolOffloadEnabled()) {
+          const plan = planToolOffload(
+            openAiTools.map((t) => ({
+              name: t.function.name,
+              description: t.function.description,
+              parameters: t.function.parameters as Record<string, unknown>,
+            })),
+          );
+          if (plan.offloaded.length > 0) {
+            toolRegistry.register(createUseToolTool(toolRegistry, plan.offloaded) as never);
+            const keep = new Set([...plan.staticTools.map((t) => t.name), USE_TOOL_NAME]);
+            openAiTools = toolRegistry.toOpenAITools().filter((t) => keep.has(t.function.name));
+            toolOffloadPointer = plan.pointer;
+          }
+        }
         const toolListNames = openAiTools.map((t) => t.function.name);
         const toolList = openAiTools
           .map((t) => `- ${t.function.name}: ${t.function.description}`)
@@ -792,7 +812,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           color: "#00d9a3",
           avatar: "◆",
           tools: toolListNames,
-          systemPrompt: shellContextBlock,
+          systemPrompt: [shellContextBlock, toolOffloadPointer].filter(Boolean).join("\n\n"),
         };
         // Composed workspace already includes product tree + draft plan ops +
         // epistemic banner. ragContext stays empty on the agent path (memory
@@ -943,7 +963,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               ...historyForModel,
               { role: "user", content: effectiveUserText },
             ] satisfies AgentMessage[]),
-          tools: toolRegistry.toOpenAITools().map((t) => ({
+          tools: openAiTools.map((t) => ({
             name: t.function.name,
             description: t.function.description,
             parameters: t.function.parameters,

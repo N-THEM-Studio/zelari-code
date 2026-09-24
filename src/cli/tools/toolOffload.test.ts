@@ -51,9 +51,12 @@ describe('planToolOffload', () => {
     }
   });
 
-  it('is opt-in', () => {
-    expect(isToolOffloadEnabled({})).toBe(false);
+  it('is on by default, off with 0 / false / no / off', () => {
+    expect(isToolOffloadEnabled({})).toBe(true);
     expect(isToolOffloadEnabled({ ZELARI_TOOL_OFFLOAD: '1' })).toBe(true);
+    for (const v of ['0', 'false', 'NO', ' off ']) {
+      expect(isToolOffloadEnabled({ ZELARI_TOOL_OFFLOAD: v })).toBe(false);
+    }
   });
 });
 

@@ -421,9 +421,10 @@ export async function runOneTurn(
     parameters: t.function.parameters as Record<string, unknown>,
   });
   let tools: AgentToolSpec[] = toolRegistry.toOpenAITools().map(toToolSpec);
-  // ZELARI_TOOL_OFFLOAD=1 (flagged, token audit 2026-09): rarely used and MCP
-  // schemas leave the request; they stay reachable through `use_tool`, and a
-  // stable pointer paragraph in the system prompt names them.
+  // Tool offload (default on, ZELARI_TOOL_OFFLOAD=0 disables; token audit
+  // 2026-09): rarely used and MCP schemas leave the request; they stay
+  // reachable through `use_tool`, and a stable pointer paragraph in the
+  // system prompt names them.
   let toolOffloadPointer = '';
   if (isToolOffloadEnabled()) {
     const plan = planToolOffload(tools);
