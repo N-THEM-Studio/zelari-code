@@ -1022,6 +1022,12 @@ export function buildTaskUserPrompt(args: {
   prompt: string;
   scope?: string[];
   acceptance?: string[];
+  /**
+   * Per-run facts the static tentacle system prompt cannot carry (it stays
+   * byte-stable for the cache): where the tentacle runs, on what platform,
+   * and — for an isolated worktree — how the parent's paths map into it.
+   */
+  runtime?: TaskRuntimeContext;
 }): string {
   const parts: string[] = [args.prompt.trim()];
   if (args.scope && args.scope.length > 0) {
@@ -1034,7 +1040,42 @@ export function buildTaskUserPrompt(args: {
   if (args.acceptance && args.acceptance.length > 0) {
     parts.push('', '## Acceptance criteria', ...args.acceptance.map((a) => `- ${a}`));
   }
+  if (args.runtime) parts.push('', formatTaskRuntime(args.runtime));
   return parts.join('\n');
+}
+
+/** Per-run environment of one tentacle (see buildTaskUserPrompt). */
+export interface TaskRuntimeContext {
+  /** Directory the tentacle's tools resolve relative paths against. */
+  cwd: string;
+  /** `process.platform` of the host. */
+  platform: string;
+  /** Whether this tentacle kind has a shell (explore does not). */
+  shell: boolean;
+  /** Parent working tree, set only when the tentacle runs in an isolated worktree. */
+  parentCwd?: string;
+}
+
+/** Render the `## Runtime` block the tentacle prompts refer to. */
+export function formatTaskRuntime(rt: TaskRuntimeContext): string {
+  const lines = [
+    '## Runtime',
+    `- Working directory: ${rt.cwd} (relative paths resolve here)`,
+    `- Platform: ${rt.platform}`,
+  ];
+  if (rt.shell) {
+    lines.push(
+      rt.platform === 'win32'
+        ? '- Shell: non-interactive; Git Bash (POSIX) when available, else cmd.exe — pass flags like --yes'
+        : '- Shell: non-interactive /bin/sh — pass flags like --yes',
+    );
+  }
+  if (rt.parentCwd && rt.parentCwd !== rt.cwd) {
+    lines.push(
+      `- Isolated git worktree: yes. The brief may cite paths under ${rt.parentCwd} — use the same relative path inside the working directory above; never edit the parent tree directly.`,
+    );
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -2011,10 +2052,17 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // (explore/verify never consume it: re-investigating IS the cure).
   const truncatedBasisBanner = consumeTruncatedReportBanner(sessionId, agent);
   const taskUserPrompt = truncatedBasisBanner ? `${truncatedBasisBanner}\n\n${args.prompt}` : args.prompt;
+  const runtimeCwd = sub.cwd || effectiveCwd;
   const taskUserContent = buildTaskUserPrompt({
     prompt: taskUserPrompt,
     scope: args.scope,
     acceptance: withKrakenRequiredChecks(agent, args.acceptance),
+    runtime: {
+      cwd: runtimeCwd,
+      platform: process.platform,
+      shell: agent !== 'explore',
+      ...(worktree ? { parentCwd } : {}),
+    },
   });
   // §51 — tentacles may receive a compact projected parent summary (never
   // the full lead transcript). Inert unless parentTranscript is passed.
@@ -2025,7 +2073,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // and the loop cap below is SOFT (the harness auto-extends it), which is why
   // the tool description advertises the budget as partial/best-effort.
   const maxToolCalls = resolveBudget(agent, thoroughness);
-  const runCwd = sub.cwd || effectiveCwd;
+  const runCwd = runtimeCwd;
   const config: AgentHarnessConfig = {
     model: sub.model,
     provider: sub.provider,

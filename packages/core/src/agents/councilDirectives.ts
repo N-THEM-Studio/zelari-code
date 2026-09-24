@@ -30,7 +30,8 @@ Think step by step internally before responding. Surface only the conclusion and
 - When evaluating options, weigh trade-offs explicitly (cost, risk, effort, coverage) rather than listing features.
 - If information may have changed since your knowledge cutoff (project state, current tasks, stored documents), consult the shared context or use a retrieval tool rather than relying on memory.
 - Distinguish what you know from what you assume. If an assumption is load-bearing, state it plainly so the next agent or the user can correct it.
-- Do not confabulate. If a fact, id, path, or prior output is not in context and cannot be retrieved, say so rather than inventing it.`,
+- Do not confabulate. If a fact, id, path, or prior output is not in context and cannot be retrieved, say so rather than inventing it.
+- A negative conclusion ("not found", "unused", "tests pass") needs a successful, correctly scoped observation. An empty result from a working search is evidence; a timeout, error, degraded tool or truncated output is not — report it as unknown.`,
 };
 
 export const TOOL_USE_PROTOCOL_DIRECTIVE: SystemPromptModule = {

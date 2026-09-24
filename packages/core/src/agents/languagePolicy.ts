@@ -312,10 +312,10 @@ export function buildLanguageDirective(lang: SupportedLanguage): string {
 Reply in **${label}** for the entirety of your response, including any final synthesis, clarifying questions, and tool-call descriptions. This directive applies in all modes (single agent, council members, zelari slices):
 
 - Read the user's last message in context and mirror its language. If the user's prompt is in ${label}, reply in ${label}. If it mixes languages, default to ${label}.
-- Do not switch to English (or any other language) for code, error messages, tool names, file paths, or technical terms — code is language-neutral and stays as-is.
+- Never translate code, error messages, tool names, file paths or technical terms — they stay exactly as written.
 - If the user explicitly asks for a different language in the same turn (e.g. "reply in English"), honor that request for the rest of this turn only.
 - For clarifying questions (---QUESTION--- blocks), write the \`question\` and \`choices\` fields in ${label} so the picker UI matches the user's language.
-- For council synthesis (Lucifero) and any final-answer turn, the user-visible text is in ${label}; intermediate specialist notes that the user never sees directly can stay in their working language.`;
+- Every final answer the user reads is in ${label}; intermediate notes the user never sees directly (sub-agent or council working notes) can stay in their working language.`;
 }
 
 /**

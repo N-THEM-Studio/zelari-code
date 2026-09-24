@@ -196,15 +196,34 @@ export function buildSystemPromptSplit(
   // base module REPLACES it (override semantics), rather than being appended.
   // This makes the council identity configurable — a caller can ship a custom
   // 'base-identity' module via aiConfig.customPromptModules and it wins over
-  // the builtin. Backward-compatible: today no caller ships a duplicate type,
-  // so existing append behavior is preserved for non-colliding types.
+  // the builtin.
+  //
+  // 2026-09-24 prompt audit:
+  //   - `custom` is the catch-all type shared by most base modules, so it is
+  //     NEVER an override key: a delegation-policy module (type `custom`)
+  //     used to drop Coding Practices, Turn Completion, Clarification,
+  //     Reasoning, Tool-Use and Output Quality from the Kraken prompt.
+  //   - A replacing module takes the SLOT of the module it replaces (the
+  //     Kraken identity sat at +1000, after a dozen rule blocks, so the
+  //     prompt opened on confidentiality instead of who the agent is).
+  //   - `language-policy` keeps its declared priority (harness-pinned early).
+  //   - Everything else is appended after the base pack (+1000), as before.
   const customModulesRaw = aiConfig?.customPromptModules ?? [];
-  const customTypes = new Set(customModulesRaw.map((m) => m.type));
+  const baseByType = new Map<SystemPromptModule['type'], SystemPromptModule>();
+  for (const m of baseModules) if (m.type !== 'custom' && !baseByType.has(m.type)) baseByType.set(m.type, m);
+  const customTypes = new Set<SystemPromptModule['type']>(
+    customModulesRaw.map((m) => m.type).filter((t) => t !== 'custom'),
+  );
   const baseNotOverridden = baseModules.filter((m) => !customTypes.has(m.type));
-  const customModules: SystemPromptModule[] = customModulesRaw.map((m) => ({
-    ...m,
-    priority: 1000 + m.priority,
-  }));
+  const customModules: SystemPromptModule[] = customModulesRaw.map((m) => {
+    const replaced = m.type === 'custom' ? undefined : baseByType.get(m.type);
+    const priority = replaced
+      ? replaced.priority
+      : m.type === 'language-policy'
+        ? m.priority
+        : 1000 + m.priority;
+    return { ...m, priority };
+  });
 
   const allModules = [...baseNotOverridden, ...customModules].sort((a, b) => a.priority - b.priority);
 
