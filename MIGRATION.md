@@ -349,12 +349,13 @@ New relational invariants live in `validateResourceAndContractEvents()`
 
 ## 2.58 — `.zelari/permissions.json` → `.zelari/policy.json` (ADR-0039 Phase 2)
 
-> **v2.62 — REMOVED (ADR-0039 Phase 3, slice P3a).** The two-minor window
-> (≥ v2.59) closed with v2.60; from v2.62 the policy engine no longer reads
-> `.zelari/permissions.json` — the `compat` translation layer is deleted.
-> A tree that still only has `permissions.json` gets NO permission rules from
-> that file (restrict-only defaults and `policy.json` are unaffected). Migrate
-> with the recipe below.
+> **v2.62 — compat layer REMOVED (ADR-0039 Phase 3, slice P3a).** The
+> two-minor window (≥ v2.59) closed with v2.60; from v2.62 the unified policy
+> engine no longer translates `.zelari/permissions.json` — the `compat` layer
+> and its load-time deprecation notice are gone. Engine A (`permissionGate`)
+> still reads the file directly at dispatch until P3b deletes it: the file's
+> rules keep applying, but ONLY through the legacy engine. Migrate now with
+> the recipe below.
 
 `.zelari/permissions.json` (the WS1 rule file, `pathPrefix` syntax) is
 **deprecated**. It is still read and still honored — but it is now honored
