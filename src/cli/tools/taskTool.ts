@@ -63,6 +63,10 @@ import {
   type ReportStatus,
   type ReportTruncatedReason,
 } from './subagentReportStatus.js';
+import {
+  consumeTruncatedReportBanner,
+  recordTruncatedReport,
+} from './truncatedReportGate.js';
 import { existsSync } from 'node:fs';
 import {
   createKrakenWorktreeDetailed,
@@ -1983,8 +1987,14 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // WS5 (t137): `SubagentStart` — the tentacle is really running now (live
   // tracker registered, isolation resolved, first phase emitted).
   fireSubagentHook(deps.lifecycleHooks, 'SubagentStart', buildSubagentHookPayload(subagentHookBase), hookCtx);
+  // W6.2 (post-mortem 2026-09-23): when the latest report this session handed
+  // to the parent was truncated, the next `general` gets an explicit
+  // basis-warning banner at the head of its prompt — one-shot, `general` only
+  // (explore/verify never consume it: re-investigating IS the cure).
+  const truncatedBasisBanner = consumeTruncatedReportBanner(sessionId, agent);
+  const taskUserPrompt = truncatedBasisBanner ? `${truncatedBasisBanner}\n\n${args.prompt}` : args.prompt;
   const taskUserContent = buildTaskUserPrompt({
-    prompt: args.prompt,
+    prompt: taskUserPrompt,
     scope: args.scope,
     acceptance: withKrakenRequiredChecks(agent, args.acceptance),
   });
@@ -2142,6 +2152,9 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // G2 (post-mortem 2026-09-23): the structured report status derives from
   // the deterministic truncation facts only — never from the report's text.
   const reportStatus: ReportStatus = reportStatusOf(reportTruncated);
+  // W6.2: flag the session so the NEXT `general` spawn is warned that its
+  // brief may rest on this partial report (soft gate, env kill-switch inside).
+  if (reportStatus === 'truncated') recordTruncatedReport(sessionId);
   const durationMs = Date.now() - started;
 
   // W6.1 (post-mortem 2026-09-23): every non-success terminal path below

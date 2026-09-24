@@ -29,6 +29,11 @@ import {
   REPORT_TRUNCATED_GUARD_LINE,
   REPORT_TRUNCATED_MARKER,
 } from './subagentReportStatus.js';
+import {
+  TRUNCATED_REPORT_BANNER_MARKER,
+  TRUNCATED_REPORT_GATE_ENV,
+  resetTruncatedReportGateForTests,
+} from './truncatedReportGate.js';
 
 /** Minimal provider stream: no model output, text-only finish. */
 const providerStream = async function* (): AsyncGenerator<never> {
@@ -95,6 +100,9 @@ beforeEach(() => {
 afterEach(() => {
   if (previousWorktreeMode === undefined) delete process.env.ZELARI_KRAKEN_WORKTREE;
   else process.env.ZELARI_KRAKEN_WORKTREE = previousWorktreeMode;
+  // W6.2: the gate state spans runTentacle calls — reset between tests.
+  delete process.env[TRUNCATED_REPORT_GATE_ENV];
+  resetTruncatedReportGateForTests();
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -297,5 +305,99 @@ describe('W6.1 (2026-09-23) — partial-transcript flush on non-success exits', 
     expect(body).toContain('Conclusione completa e verificata.');
     expect(body).not.toContain('[interrupted]');
     expect(body).not.toContain('status:');
+  });
+});
+
+describe('W6.2 (2026-09-23) — truncated-basis banner on the next general spawn', () => {
+  /** Deps whose harnessFactory captures the config the spawn was built with. */
+  const captureDeps = (script: BrainEvent[], sink: { config?: unknown }): TaskToolDeps => {
+    const base = depsFor(script);
+    return {
+      ...base,
+      harnessFactory: ((cfg: unknown) => {
+        sink.config = cfg;
+        return (base.harnessFactory as () => SubAgentHarness)();
+      }) as unknown as TaskToolDeps['harnessFactory'],
+    };
+  };
+
+  /** The user-message content the sub-agent was actually spawned with. */
+  const userPromptOf = (sink: { config?: unknown }): string => {
+    const messages =
+      (sink.config as { messages?: Array<{ role: string; content: string }> } | undefined)?.messages ?? [];
+    return messages.find((m) => m.role === 'user')?.content ?? '';
+  };
+
+  const cleanScript = (): BrainEvent[] => [
+    mk({ type: 'message_start' }),
+    mk({ type: 'message_delta', delta: 'Conclusione esplicita e completa.' }),
+    mk({ type: 'message_end', finishReason: 'stop' }),
+  ];
+
+  const runIn = (
+    sessionId: string,
+    script: BrainEvent[],
+    agent: 'explore' | 'general',
+    sink?: { config?: unknown },
+  ): Promise<TentacleResult> =>
+    runTentacle({
+      deps: sink ? captureDeps(script, sink) : depsFor(script),
+      args: { description: 'impl slice', prompt: 'implement the slice' },
+      agent,
+      thoroughness: 'medium',
+      parentCwd: dir,
+      sessionId,
+    });
+
+  it('a truncated explore flags the session: the next general prompt carries the banner, the one after does not (one-shot)', async () => {
+    // 1) the exact post-mortem shape: stream cut mid-message, no message_end seal.
+    const truncated = await runIn(
+      'w62-a',
+      [
+        mk({ type: 'message_start' }),
+        mk({ type: 'message_delta', delta: 'frammento di thinking, nessuna conclusione' }),
+      ],
+      'explore',
+    );
+    expect((truncated as { reportStatus?: string }).reportStatus).toBe('truncated');
+
+    // 2) the doomed general — now warned at spawn time, prompt still intact below the banner.
+    const first: { config?: unknown } = {};
+    const warned = await runIn('w62-a', cleanScript(), 'general', first);
+    expect(warned.ok).toBe(true);
+    expect(userPromptOf(first)).toContain(TRUNCATED_REPORT_BANNER_MARKER);
+    expect(userPromptOf(first)).toContain('implement the slice');
+
+    // 3) one-shot: the flag was consumed, the next general spawns clean.
+    const second: { config?: unknown } = {};
+    await runIn('w62-a', cleanScript(), 'general', second);
+    expect(userPromptOf(second)).not.toContain(TRUNCATED_REPORT_BANNER_MARKER);
+  });
+
+  it('a clean report never arms the gate — the general prompt is untouched', async () => {
+    const ok = await runIn('w62-b', cleanScript(), 'explore');
+    expect((ok as { reportStatus?: string }).reportStatus).toBe('ok');
+
+    const sink: { config?: unknown } = {};
+    await runIn('w62-b', cleanScript(), 'general', sink);
+    expect(userPromptOf(sink)).not.toContain(TRUNCATED_REPORT_BANNER_MARKER);
+    expect(userPromptOf(sink)).toContain('implement the slice');
+  });
+
+  it('kill-switch env disables the banner even after a truncated report', async () => {
+    process.env[TRUNCATED_REPORT_GATE_ENV] = '0';
+    const truncated = await runIn(
+      'w62-c',
+      [
+        mk({ type: 'message_start' }),
+        mk({ type: 'message_delta', delta: 'frammento tagliato dal runtime' }),
+      ],
+      'explore',
+    );
+    expect((truncated as { reportStatus?: string }).reportStatus).toBe('truncated');
+
+    const sink: { config?: unknown } = {};
+    await runIn('w62-c', cleanScript(), 'general', sink);
+    expect(userPromptOf(sink)).not.toContain(TRUNCATED_REPORT_BANNER_MARKER);
   });
 });
