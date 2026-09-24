@@ -1,0 +1,1688 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kraken Neurons — live 3D activity · zelari-code</title>
+<style>
+  :root {
+    --bg0: #03060c; --bg1: #071020;
+    --ink: #b8c6e0; --ink-dim: #5d6f8f; --ink-bright: #eaf2ff;
+    --cyan: #3fe0d4; --violet: #9a6cff; --amber: #dca03c; --red: #dc4646;
+    --green: #3cb46e; --panel: rgba(8, 16, 30, 0.72); --line: rgba(120, 160, 220, 0.18);
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg0); color: var(--ink);
+    font-family: var(--mono); font-size: 12px; }
+  #stage { position: fixed; inset: 0; display: block; cursor: grab; }
+  #stage.dragging { cursor: grabbing; }
+  #hud { position: fixed; inset: 0; pointer-events: none; }
+  #hud > * { pointer-events: auto; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  #topbar { position: absolute; top: 14px; left: 14px; padding: 10px 14px; max-width: 46vw; }
+  #topbar h1 { font-size: 13px; letter-spacing: 0.14em; color: var(--ink-bright); font-weight: 600; }
+  #topbar h1 .octo { color: var(--violet); }
+  #badges { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .badge { font-size: 10px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
+    color: var(--ink-dim); white-space: nowrap; }
+  .badge .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    margin-right: 5px; vertical-align: 1px; background: var(--ink-dim); }
+  .badge.live .dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .badge.live { color: var(--green); border-color: rgba(60, 180, 110, 0.4); }
+  .badge.demo .dot { background: var(--violet); box-shadow: 0 0 8px var(--violet); }
+  .badge.demo { color: var(--violet); border-color: rgba(154, 108, 255, 0.4); }
+  .badge.wait .dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .badge.wait { color: var(--amber); border-color: rgba(220, 160, 60, 0.4); }
+  #goalline { margin-top: 6px; color: var(--ink-dim); font-size: 10px; max-width: 42vw;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  #counters { position: absolute; top: 14px; right: 14px; padding: 10px 12px; min-width: 210px; }
+  #counters table { border-collapse: collapse; width: 100%; }
+  #counters td { padding: 1px 4px; font-size: 11px; }
+  #counters td.k { color: var(--ink-dim); }
+  #counters td.v { text-align: right; color: var(--ink-bright); }
+  #phasechip { margin-top: 6px; padding: 3px 8px; border-radius: 6px; background: rgba(63, 224, 212, 0.08);
+    border: 1px solid rgba(63, 224, 212, 0.25); color: var(--cyan); text-align: center; font-size: 10px; }
+
+  #logpanel { position: absolute; right: 14px; top: 210px; width: 330px; height: 42vh;
+    display: flex; flex-direction: column; overflow: hidden; }
+  #logpanel h2, #detail h2, #legend h2 { font-size: 10px; letter-spacing: 0.12em; color: var(--ink-dim);
+    padding: 8px 12px 6px; border-bottom: 1px solid var(--line); }
+  #feed { flex: 1; overflow-y: auto; padding: 6px 10px; }
+  #feed::-webkit-scrollbar { width: 6px; }
+  #feed::-webkit-scrollbar-thumb { background: rgba(120, 160, 220, 0.25); border-radius: 3px; }
+  .ev { display: flex; gap: 6px; padding: 2px 0; font-size: 10px; line-height: 1.45;
+    border-bottom: 1px dotted rgba(120, 160, 220, 0.08); }
+  .ev .t { color: var(--ink-dim); flex: none; }
+  .ev .chip { flex: none; padding: 0 5px; border-radius: 4px; font-size: 9px; line-height: 1.5; }
+  .ev .x { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  #detail { position: absolute; right: 14px; bottom: 68px; width: 330px; max-height: 30vh;
+    display: none; flex-direction: column; overflow: hidden; }
+  #detail.open { display: flex; }
+  #detail .body { padding: 8px 12px; overflow-y: auto; }
+  #detail table { border-collapse: collapse; width: 100%; margin-bottom: 6px; }
+  #detail td { padding: 1px 4px 1px 0; font-size: 10px; vertical-align: top; }
+  #detail td.k { color: var(--ink-dim); white-space: nowrap; }
+  #detail td.v { color: var(--ink-bright); word-break: break-word; }
+  #detail .dclose { position: absolute; top: 6px; right: 10px; cursor: pointer; color: var(--ink-dim); }
+  #detail .dclose:hover { color: var(--ink-bright); }
+  #devents { border-top: 1px solid var(--line); padding-top: 5px; color: var(--ink-dim); font-size: 10px; }
+  #devents div { padding: 1px 0; }
+
+  #legend { position: absolute; left: 14px; bottom: 68px; padding: 0 0 8px; width: 186px; }
+  #legend .row { display: flex; align-items: center; gap: 8px; padding: 2px 12px; font-size: 10px; color: var(--ink); }
+  #legend .sw { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  #legend .st { color: var(--ink-dim); margin-left: auto; }
+
+  #toolbar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    display: flex; gap: 6px; padding: 8px 10px; align-items: center; }
+  button {
+    font-family: var(--mono); font-size: 10px; color: var(--ink); background: rgba(120, 160, 220, 0.08);
+    border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover { background: rgba(63, 224, 212, 0.12); border-color: rgba(63, 224, 212, 0.4); color: var(--ink-bright); }
+  button.on { background: rgba(154, 108, 255, 0.16); border-color: rgba(154, 108, 255, 0.5); color: var(--violet); }
+  #toolbar input { font-family: var(--mono); font-size: 10px; background: rgba(3, 6, 12, 0.6); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; width: 140px; }
+  #toolbar input::placeholder { color: var(--ink-dim); }
+
+  #hint { position: absolute; left: 14px; bottom: 14px; color: var(--ink-dim); font-size: 9px; }
+
+  #hero { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%);
+    display: none; max-width: 470px; padding: 18px 24px; text-align: center; z-index: 5; }
+  #hero.show { display: block; }
+  #hero h3 { font-size: 13px; letter-spacing: 0.1em; color: var(--ink-bright); margin-bottom: 8px; }
+  #hero p { font-size: 11px; line-height: 1.65; color: var(--ink); margin-bottom: 12px; }
+  #hero p.dim { color: var(--ink-dim); font-size: 10px; margin-top: 10px; margin-bottom: 0; }
+  #hero .btns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+  #help { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(2, 4, 10, 0.72); pointer-events: auto; z-index: 30; }
+  #help.open { display: flex; }
+  #help .card { width: min(680px, 92vw); max-height: 84vh; overflow-y: auto; padding: 20px 24px; }
+  #help h3 { color: var(--ink-bright); font-size: 13px; margin-bottom: 10px; letter-spacing: 0.1em; }
+  #help h4 { color: var(--cyan); font-size: 11px; margin: 14px 0 6px; }
+  #help p, #help li { color: var(--ink); font-size: 11px; line-height: 1.65; }
+  #help ul { padding-left: 18px; }
+  #help code { color: var(--cyan); background: rgba(63, 224, 212, 0.08); padding: 0 4px; border-radius: 4px; }
+  #help .close { float: right; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="hud">
+  <div id="topbar" class="panel">
+    <h1><span class="octo">&#128025;</span> KRAKEN&nbsp;NEURONS <span style="color:var(--ink-dim)">/ zelari-code</span></h1>
+    <div id="badges">
+      <span id="srcbadge" class="badge demo"><span class="dot"></span><span id="srctext">DEMO</span></span>
+      <span class="badge" id="graphbadge">graph: —</span>
+      <span class="badge" id="ratebadge">0 ev/min</span>
+    </div>
+    <div id="goalline">goal: —</div>
+  </div>
+
+  <div id="counters" class="panel">
+    <table>
+      <tr><td class="k">neurons</td><td class="v" id="c-total">0</td></tr>
+      <tr><td class="k">running&nbsp;&#8593;</td><td class="v" id="c-running" style="color:var(--cyan)">0</td></tr>
+      <tr><td class="k">done&nbsp;&#10003;</td><td class="v" id="c-done" style="color:var(--green)">0</td></tr>
+      <tr><td class="k">error&nbsp;&#10007;</td><td class="v" id="c-error" style="color:var(--red)">0</td></tr>
+      <tr><td class="k">pending&nbsp;&#9675;</td><td class="v" id="c-pending">0</td></tr>
+      <tr><td class="k">verdicts p/f</td><td class="v" id="c-verdicts">0/0</td></tr>
+      <tr><td class="k">escalations</td><td class="v" id="c-esc" style="color:var(--violet)">0</td></tr>
+      <tr><td class="k">pulses</td><td class="v" id="c-pulses">0</td></tr>
+    </table>
+    <div id="phasechip">phase: —</div>
+  </div>
+
+  <div id="logpanel" class="panel">
+    <h2>ACTIVITY FEED</h2>
+    <div id="feed"></div>
+  </div>
+
+  <div id="detail" class="panel">
+    <h2>NEURON <span id="d-title"></span></h2>
+    <span class="dclose" id="d-close">&#10005;</span>
+    <div class="body"><table id="d-table"></table><div id="devents"></div></div>
+  </div>
+
+  <div id="legend" class="panel">
+    <h2>NODE KIND</h2>
+    <div class="row"><span class="sw" style="background:#5096e6"></span>explore<span class="st">research</span></div>
+    <div class="row"><span class="sw" style="background:#3cb46e"></span>general<span class="st">writers</span></div>
+    <div class="row"><span class="sw" style="background:#dca03c"></span>verify<span class="st">gate</span></div>
+    <div class="row"><span class="sw" style="background:#dc4646"></span>spec<span class="st">contract</span></div>
+    <div class="row"><span class="sw" style="background:#9a50c8"></span>conformance<span class="st">literal</span></div>
+    <div class="row"><span class="sw" style="background:#e68232"></span>fix<span class="st">rework</span></div>
+    <div class="row"><span class="sw" style="background:#3cc8c8"></span>merge<span class="st">assemble</span></div>
+    <div class="row"><span class="sw" style="background:#66799a"></span>tentacle<span class="st">satellite</span></div>
+  </div>
+
+  <div id="toolbar" class="panel">
+    <button id="b-demo" title="toggle the built-in simulated kraken run">&#9654; demo</button>
+    <button id="b-open" title="open .zelari/radio/&lt;sessionId&gt;.jsonl (+ workbench / events.jsonl) and tail it live">&#128193; open log&#8230;</button>
+    <button id="b-folder" title="connect the .zelari folder once — auto-tails every radio/workbench log live, even from file://">&#128268; .zelari</button>
+    <button id="b-http" title="auto-tail .zelari/ from this page (serve the repo root over HTTP first)">&#127760; auto-tail</button>
+    <span style="width:4px"></span>
+    <input id="sse-base" placeholder="sse http://127.0.0.1:7421" />
+    <input id="sse-token" type="password" placeholder="bearer token" />
+    <button id="b-sse" title="stream live frames from zelari-code serve (companion SSE)">&#128225; sse</button>
+    <span style="width:4px"></span>
+    <button id="b-pause" title="Space">&#9208; pause</button>
+    <button id="b-reset" title="R">&#10227; view</button>
+    <button id="b-help" title="H">?</button>
+  </div>
+
+  <div id="hero" class="panel">
+    <h3>NO SOURCE CONNECTED</h3>
+    <p>To watch a running kraken <b>live</b>, connect the workspace folder
+      (<code>.zelari/radio</code>) — the page will tail every session and pick up
+      runs started later by itself.</p>
+    <div class="btns">
+      <button id="hero-folder">&#128268; connect .zelari</button>
+      <button id="hero-open">&#128193; open a log&#8230;</button>
+      <button id="hero-demo">&#9654; demo</button>
+    </div>
+    <p class="dim">Served over http instead? It tails the workspace automatically — zero clicks.
+      Press <b>H</b> for all options.</p>
+  </div>
+
+  <div id="hint">drag: rotate &middot; wheel: zoom &middot; click neuron: inspect &middot; F: labels &middot; Space: pause &middot; drop logs anywhere</div>
+</div>
+
+<div id="help">
+  <div class="card panel">
+    <button class="close" id="b-help-close">close &#10005;</button>
+    <h3>&#128025; KRAKEN NEURONS — live 3D activity viewer</h3>
+    <p>Every <b>neuron</b> is one node of the running Kraken task graph
+      (<code>explore / general / verify / spec / conformance / fix / merge</code>).
+      <b>Synapses</b> are the node <code>deps</code>. Pulses travel along them when a node starts
+      and when it completes. Colors follow the Kraken kind palette; flashes encode the kraken radio
+      vocabulary (<code>node_start node_end node_retry node_fix node_deferred node_rolled_back
+      graph_converged</code>&#8230;), plus K4.5 quality-escalation (violet ripple) and K4.6
+      model-swap (cyan shimmer).</p>
+
+    <h4>1 &middot; zero-click: watch the workspace live (recommended)</h4>
+    <ul>
+      <li><b>served over http</b> — from the repo root <code>npx serve .</code> (or
+        <code>python -m http.server</code>) then open
+        <code>http://127.0.0.1:3000/docs/viz/kraken-neurons.html</code>: it tails
+        <code>.zelari/radio</code> by itself at load — hot sessions seeded, new runs picked up
+        automatically. No demo, no buttons.</li>
+      <li><b>opened as file://</b> — press <code>&#128268; .zelari</code> once and pick the repo root
+        (or <code>.zelari/radio</code>): the folder is remembered (one permission click after a
+        browser restart), every radio/workbench/plan log is tailed live, and runs started
+        <i>later</i> appear automatically.</li>
+      <li>meanwhile, work: <code>zelari-code --headless --kraken-graph "your goal"</code> (or the TUI)</li>
+    </ul>
+
+    <h4>2 &middot; tail one session only</h4>
+    <ul>
+      <li>press <code>&#128193; open log&#8230;</code> and pick <code>.zelari/radio/&lt;sessionId&gt;.jsonl</code>
+        — multi-select also <code>workbench-&lt;graphId&gt;.md</code>,
+        <code>.zelari/sessions/&lt;sessionId&gt;/events.jsonl</code>, <code>plan-&lt;id&gt;.json</code>;
+        dropping files works too. The handle is re-read every 500&nbsp;ms, so it stays live.</li>
+    </ul>
+
+    <h4>3 &middot; real-time push (companion SSE)</h4>
+    <ul>
+      <li>run <code>zelari-code serve</code>; the token is in <code>~/.zelari-code/companion.token</code></li>
+      <li>serve <b>this page</b> over <code>http://127.0.0.1:&#8230;</code> (loopback) — a
+        <code>file://</code> page cannot reach the companion because of CORS — then press
+        <code>&#128225; sse</code></li>
+    </ul>
+
+    <h4>4 &middot; demo</h4>
+    <p>On first load a scripted kraken run plays (plan &#8594; explore &#8594; general &#8594; verify
+      &#8594; rework/fix &#8594; merge, with one K4.5 escalation and one K4.6 model swap) using the
+      real radio event schema. Press <code>&#9654; demo</code> to stop it when real data arrives.</p>
+
+    <h4>reading the organism</h4>
+    <ul>
+      <li>arms = topological waves: exploration ganglia near the core, writers and their verifiers
+        down each tentacle, <code>merge</code> at the tip</li>
+      <li>a travelling pulse = node transition; red shockwave = error; yellow ring = retry;
+        orange sprout = fix/rework spawn; violet ripple = quality escalation; golden wave =
+        <code>graph_converged</code></li>
+      <li>the weakness dot (Bennett) in the inspector: green = tightly asserted, red = loosely claimed</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* =========================================================================
+   Kraken Neurons — single-file 3D live viewer for the zelari-code kraken graph.
+   Auto-detected per line:
+     radio  — .zelari/radio/<sessionId>.jsonl      {ts ISO, kind, agent, description, ...}
+     spine  — .zelari/sessions/<sid>/events.jsonl  {schemaVersion, seq, ts ms, kind, actor, data}
+     brain  — SSE / --output json NDJSON           {type: 'agent_spawned'|...}
+     text   — workbench event lines, [quality_escalation], model-swap captions
+   ========================================================================= */
+
+/* ---------- tiny utils ---------- */
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+function hashStr(s) { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rnd01(seed) { const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+function fmtDur(ms) { if (ms == null) return ''; if (ms < 1000) return ms + 'ms'; if (ms < 60000) return (ms / 1000).toFixed(1) + 's'; return Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's'; }
+function fmtClock(d) { const p = (n) => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+/* ---------- kind / status palettes (mirrors apps/desktop KrakenGraphVisualizer) ---------- */
+const KINDS = {
+  explore:     { c: '#5096e6', label: 'explore' },
+  general:     { c: '#3cb46e', label: 'general' },
+  verify:      { c: '#dca03c', label: 'verify' },
+  spec:        { c: '#dc4646', label: 'spec' },
+  conformance: { c: '#9a50c8', label: 'conformance' },
+  fix:         { c: '#e68232', label: 'fix' },
+  merge:       { c: '#3cc8c8', label: 'merge' },
+  tentacle:    { c: '#66799a', label: 'tentacle' },
+};
+const kindOf = (k) => KINDS[k] || KINDS.tentacle;
+const STATUS_EMOJI = { pending: '\u25cb', running: '\u2191', done: '\u2713', error: '\u2717', skipped: '\u2013' };
+
+/* ---------- world state ---------- */
+const state = {
+  nodes: new Map(),
+  order: [],
+  edges: [],
+  pulses: [],
+  waves: [],
+  sparks: [],
+  feed: [],
+  seenFeedKeys: new Set(),
+  goal: '—', graphId: '—', phase: '—',
+  escalations: 0, verdictsPass: 0, verdictsFail: 0,
+  eventTimes: [],
+  paused: false, showLabels: true,
+  selected: null,
+  source: { mode: 'demo', label: 'DEMO', lastDataAt: performance.now() },
+};
+
+let layoutDirty = true;
+
+function node(id) {
+  let n = state.nodes.get(id);
+  if (!n) {
+    const h = hashStr(id);
+    n = {
+      id, label: id, kind: 'general', status: 'pending', deps: [], scope: '',
+      verdict: '', weakness: null, model: '', durationMs: null, agent: '', error: '',
+      events: [],
+      pos: { x: (rnd01(h) - 0.5) * 4, y: (rnd01(h + 1) - 0.5) * 4, z: (rnd01(h + 2) - 0.5) * 4 },
+      target: { x: 0, y: 0, z: 0 }, level: 0, branch: 0, flash: 0, flashColor: '#ffffff',
+      ring: 0, ringColor: '#ffffff', aliveAt: performance.now(), lastTouched: performance.now(), isTentacle: false,
+    };
+    state.nodes.set(id, n);
+    state.order.push(id);
+    layoutDirty = true;
+  }
+  return n;
+}
+
+/* ---------- layout: golden-angle tentacle spiral over topological levels ---------- */
+function computeLevels() {
+  const memo = new Map(); const visiting = new Set();
+  const lvl = (id) => {
+    if (memo.has(id)) return memo.get(id);
+    if (visiting.has(id)) return 0;
+    const n = state.nodes.get(id);
+    if (!n) return 0;
+    visiting.add(id);
+    let l = 0;
+    for (const d of n.deps) if (state.nodes.has(d)) l = Math.max(l, lvl(d) + 1);
+    visiting.delete(id);
+    memo.set(id, l);
+    return l;
+  };
+  for (const id of state.order) lvl(id);
+  const rootOf = (id) => {
+    const n = state.nodes.get(id); if (!n) return id;
+    const up = n.deps.find((d) => state.nodes.has(d));
+    if (!up) return id;
+    return rootOf(up);
+  };
+  const branchIndex = new Map();
+  for (const id of state.order) {
+    const root = rootOf(id);
+    if (!branchIndex.has(root)) branchIndex.set(root, branchIndex.size);
+  }
+    const GOLDEN = 2.399963229728653;
+    let lmax = 0;
+    for (const l of memo.values()) if (l > lmax) lmax = l;
+    for (const id of state.order) {
+      const n = state.nodes.get(id);
+      const h = hashStr(id);
+      n.level = memo.get(id) ?? 0;
+      n.branch = branchIndex.get(rootOf(id)) ?? 0;
+      const ang = n.branch * GOLDEN + n.level * 0.55 + rnd01(h) * 0.5;
+      const radius = (n.isTentacle ? 1.4 : 2.2) + n.level * 2.0 + rnd01(h + 3) * 0.6;
+      const y = (n.level - lmax / 2) * 2.4 + (rnd01(h + 5) - 0.5) * 1.0;
+      n.target = {
+        x: Math.cos(ang) * radius + (rnd01(h + 7) - 0.5) * 0.8,
+        y,
+        z: Math.sin(ang) * radius + (rnd01(h + 9) - 0.5) * 0.8,
+      };
+    }
+  layoutDirty = false;
+}
+function rebuildEdges() {
+  const seen = new Set(); state.edges.length = 0;
+  for (const id of state.order) {
+    const n = state.nodes.get(id);
+    for (const d of n.deps) {
+      if (!state.nodes.has(d)) continue;
+      const key = d + ' ' + id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      state.edges.push({ a: d, b: id, heat: 0, dash: 0 });
+    }
+  }
+}
+
+/* ---------- activity pipeline ---------- */
+function addFeed(entry, dedupeKey) {
+  const key = dedupeKey || (entry.ts + '|' + entry.kind + '|' + entry.text);
+  if (state.seenFeedKeys.has(key)) return false;
+  state.seenFeedKeys.add(key);
+  if (state.seenFeedKeys.size > 4000) state.seenFeedKeys.clear();
+  state.feed.push(entry);
+  if (state.feed.length > 160) state.feed.shift();
+  state.eventTimes.push(performance.now());
+  state.source.lastDataAt = performance.now();
+  renderFeedEntry(entry);
+  return true;
+}
+
+function flashNode(id, color, ring) {
+  const n = state.nodes.get(id); if (!n) return;
+  n.flash = 1; n.flashColor = color;
+  n.lastTouched = performance.now();
+  if (ring) { n.ring = 1; n.ringColor = ring; }
+}
+
+function spawnPulse(fromId, toId, color, size) {
+  const b = state.nodes.get(toId);
+  if (!b) return;
+  const a = state.nodes.get(fromId);
+  const from = a ? { ...a.pos } : { x: 0, y: b.pos.y * 0.2, z: 0 };
+  state.pulses.push({ from, to: toId, t: 0, speed: 0.9 + Math.random() * 0.5, color, size: size || 1 });
+  const e = state.edges.find((e) => e.a === fromId && e.b === toId);
+  if (e) e.heat = 1;
+}
+
+function pulseFromDeps(id, color) {
+  const n = state.nodes.get(id); if (!n) return;
+  const deps = n.deps.filter((d) => state.nodes.has(d));
+  if (deps.length === 0) spawnPulse('\x00core', id, color);
+  else for (const d of deps) spawnPulse(d, id, color);
+}
+function pulseToDependents(id, color) {
+  let any = false;
+  for (const e of state.edges) if (e.a === id) { spawnPulse(id, e.b, color); any = true; }
+  if (!any) state.waves.push({ node: id, r: 0, max: 90, color, alpha: 0.5 });
+}
+
+function applyStatus(id, status, opts) {
+  const n = node(id);
+  const prev = n.status;
+  if (prev === status && !(opts && opts.force)) return n;
+  n.status = status;
+  if (opts && opts.startedAt) n.aliveAt = performance.now();
+  switch (status) {
+    case 'running':
+      pulseFromDeps(id, kindOf(n.kind).c);
+      flashNode(id, '#eaf2ff');
+      break;
+    case 'done':
+      flashNode(id, kindOf(n.kind).c, '#3cb46e');
+      pulseToDependents(id, kindOf(n.kind).c);
+      break;
+    case 'error':
+      flashNode(id, '#dc4646', '#dc4646');
+      state.waves.push({ node: id, r: 0, max: 120, color: '#dc4646', alpha: 0.45 });
+      break;
+    case 'skipped':
+      flashNode(id, '#66799a');
+      break;
+  }
+  return n;
+}
+
+function feedRadioStyle(ts, kind, nodeId, text, color) {
+  addFeed({ ts, kind, nodeId, text, color: color || '#66799a' });
+}
+
+/* ---------- special text lines: K4.5 escalation / K4.6 swap / K4.4 repair ---------- */
+const SPECIAL_COLORS = { quality: '#9a6cff', swap: '#3fe0d4', repair: '#e68232', guard: '#dc4646' };
+
+function findByLabel(label) {
+  if (!label) return null;
+  for (const n of state.nodes.values()) if (n.label === label) return n;
+  return null;
+}
+
+function handleSpecialLine(line, ts) {
+  const t = String(line || '').trim();
+  if (!t) return false;
+  const time = ts || fmtClock(new Date());
+  if (t.includes('[quality_escalation]')) {
+    state.escalations += 1;
+    const m = t.match(/label="([^"]*)"/);
+    const target = findByLabel(m ? m[1] : '');
+    const id = target ? target.id : null;
+    feedRadioStyle(time, 'quality\u2191', id || '\u2014', t.slice(0, 120), SPECIAL_COLORS.quality);
+      if (id) {
+        flashNode(id, SPECIAL_COLORS.quality, SPECIAL_COLORS.quality);
+        pulseFromDeps(id, SPECIAL_COLORS.quality);
+        state.waves.push({ node: id, r: 0, max: 150, color: SPECIAL_COLORS.quality, alpha: 0.4 });
+      }
+    return true;
+  }
+  if (/model\s+\S+\s+unavailable\s+\u2014\s+retrying with/i.test(t)) {
+    feedRadioStyle(time, 'swap', '\u2014', t.slice(0, 120), SPECIAL_COLORS.swap);
+    for (const n of state.nodes.values()) {
+      if (n.status === 'running') { n.flash = Math.max(n.flash, 0.7); n.flashColor = SPECIAL_COLORS.swap; }
+    }
+    return true;
+  }
+  if (t.includes('[tool_schema_repair_hint]') || t.includes('[tool_schema_repair_capped]')) {
+    feedRadioStyle(time, 'repair', '\u2014', t.slice(0, 120), SPECIAL_COLORS.repair);
+    return true;
+  }
+  if (/\b(tool_args_parse_failed|tool_call_truncated|text_tools_parse_failed|assistant_text_loop)\b/.test(t)) {
+    feedRadioStyle(time, 'guard', '\u2014', t.slice(0, 120), SPECIAL_COLORS.guard);
+    return true;
+  }
+  return false;
+}
+
+function tallyVerdict(v) { if (v === 'pass') state.verdictsPass += 1; else if (v === 'fail') state.verdictsFail += 1; }
+
+function guessRepairParent(ev) {
+  const m = (ev.detail || '').match(/\b[a-z][a-z0-9-]{2,}\b/gi) || [];
+  for (const cand of m) if (state.nodes.has(cand)) return [cand];
+  return [];
+}
+
+function goldenWave(quiet) {
+  for (const n of state.nodes.values()) { n.ring = 1; n.ringColor = '#e8c96a'; }
+  state.waves.push({ node: null, r: 0, max: 520, color: '#e8c96a', alpha: 0.3 });
+  if (!quiet) feedRadioStyle(fmtClock(new Date()), 'graph_converged', '\u2014', 'graph converged', '#e8c96a');
+}
+
+function sparkAround(n, color) {
+  for (let i = 0; i < 4; i++) {
+    const a = Math.random() * Math.PI * 2, b = Math.random() * Math.PI - Math.PI / 2;
+    state.sparks.push({
+      p: { ...n.pos }, color,
+      v: { x: Math.cos(a) * Math.cos(b) * 1.6, y: Math.sin(b) * 1.6, z: Math.sin(a) * Math.cos(b) * 1.6 },
+      life: 1,
+    });
+  }
+}
+
+/* ---------- radio: {ts ISO, kind, agent, description, detail?, model?, nodeId?...} ---------- */
+const RADIO_COLORS = {
+  spawn: '#3fe0d4', progress: '#66799a', done: '#3cb46e', verify_hint: '#dca03c',
+  error: '#dc4646', node_start: '#eaf2ff', node_end: '#3cb46e', node_retry: '#dca03c',
+  node_fix: '#e68232', node_deferred: '#66799a', node_worktree_scheduled: '#5096e6',
+  'worktree.fallback_shared_tree': '#e68232', node_semantic_admitted: '#5096e6',
+  node_rolled_back: '#e68232', node_roi_vetoed: '#66799a', roi_gate_error: '#dc4646',
+  graph_converged: '#e8c96a', graph_failed: '#dc4646', node_meter: '#dca03c',
+  task_reopened: '#9a50c8', task_stale: '#9a50c8', task_overlap: '#9a50c8', model_routing_warn: '#dc4646',
+};
+
+function handleRadio(ev) {
+  const ts = ev.ts ? fmtClock(new Date(ev.ts)) : fmtClock(new Date());
+  // radio rows for tentacle lifecycles carry no nodeId — resolve them by label
+  // (the satellite spawned for the same description)
+  const id = ev.nodeId || null;
+  const resolved = id || (ev.description ? (findByLabel(ev.description) || {}).id : null) || null;
+  const n = id ? node(id) : null;
+  if (n) {
+    if (ev.description && n.label === n.id) n.label = ev.description;
+    if (ev.model) n.model = ev.model;
+    if (ev.durationMs != null) n.durationMs = ev.durationMs;
+    if (ev.detail && ev.detail.length < 200) {
+      n.events.push({ ts, kind: ev.kind, text: ev.detail });
+      if (n.events.length > 12) n.events.shift();
+    }
+  }
+  const text = (ev.description || '') + (ev.detail ? ' \u00b7 ' + ev.detail : '');
+  feedRadioStyle(ts, ev.kind, id || ev.agent || '\u2014', text, RADIO_COLORS[ev.kind] || '#66799a');
+
+  const verdictMatch = (ev.detail || '').match(/\u00b7\s*(pass|fail|unknown)\s+w=([0-9.]+)/);
+  switch (ev.kind) {
+    case 'node_start': applyStatus(id, 'running', { startedAt: true }); break;
+    case 'node_end': {
+      if (id) {
+        if (verdictMatch) { n.verdict = verdictMatch[1]; n.weakness = parseFloat(verdictMatch[2]); tallyVerdict(verdictMatch[1]); }
+        applyStatus(id, ev.ok === false ? 'error' : 'done');
+      }
+      break;
+    }
+    case 'done':
+    case 'verify_hint':
+      if (resolved) {
+        const rn = state.nodes.get(resolved);
+        if (rn && verdictMatch) { rn.verdict = verdictMatch[1]; rn.weakness = parseFloat(verdictMatch[2]); tallyVerdict(verdictMatch[1]); }
+        applyStatus(resolved, 'done');
+      }
+      break;
+    case 'error': if (resolved) applyStatus(resolved, 'error'); break;
+    case 'node_retry': if (id) { flashNode(id, '#dca03c', '#dca03c'); applyStatus(id, 'running', { force: true }); } break;
+    case 'node_fix': {
+      const fixId = id || ('fix-' + state.order.length);
+      const f = node(fixId);
+      f.kind = 'fix';
+      if (ev.description && f.label === f.id) f.label = ev.description;
+      applyStatus(fixId, 'running', { startedAt: true });
+      if (f.deps.length === 0) { f.deps = guessRepairParent(ev); layoutDirty = true; rebuildEdges(); }
+      flashNode(fixId, '#e68232', '#e68232');
+      break;
+    }
+    case 'node_deferred': case 'node_roi_vetoed': if (id) flashNode(id, '#66799a'); break;
+    case 'node_worktree_scheduled': case 'node_semantic_admitted': if (id) flashNode(id, '#5096e6'); break;
+    case 'node_rolled_back':
+      if (id) {
+        flashNode(id, '#e68232', '#e68232');
+        state.waves.push({ node: id, r: 0, max: 110, color: '#e68232', alpha: 0.7 });
+      }
+      break;
+    case 'graph_converged': goldenWave(true); break;
+    case 'graph_failed':
+      state.waves.push({ node: null, r: 0, max: 400, color: '#dc4646', alpha: 0.5 });
+      break;
+    case 'node_meter': {
+      const wm = (ev.detail || '').match(/weakness=([0-9.]+)/);
+      if (id && wm) n.weakness = parseFloat(wm[1]);
+      else if (wm) {
+        const cand = [...state.nodes.values()].filter((x) => ['verify', 'spec', 'conformance'].includes(x.kind) && x.status === 'done').pop();
+        if (cand) cand.weakness = parseFloat(wm[1]);
+      }
+      if (id) flashNode(id, '#dca03c');
+      break;
+    }
+    case 'spawn': {
+      // if a graph/workbench node with this description already exists, light IT up
+      // instead of creating a duplicate satellite
+      const existing = ev.description ? findByLabel(ev.description) : null;
+      const tid = id || (existing ? existing.id : 't:' + (ev.description || state.order.length));
+      const tn = node(tid);
+      if (!existing) {
+        tn.isTentacle = true;
+        if (!KINDS[tn.kind] || tn.kind === 'general') tn.kind = 'tentacle';
+        if (ev.agent && KINDS[ev.agent]) tn.kind = ev.agent;
+        layoutDirty = true;
+      }
+      applyStatus(tid, 'running', { startedAt: true });
+      flashNode(tid, '#3fe0d4');
+      break;
+    }
+    default: if (id) flashNode(id, RADIO_COLORS[ev.kind] || '#66799a'); break;
+  }
+}
+
+/* ---------- spine: {schemaVersion, seq, ts ms, kind, actor, data} ---------- */
+function handleSpine(ev) {
+  const ts = fmtClock(new Date(ev.ts || Date.now()));
+  const d = ev.data || {};
+  switch (ev.kind) {
+    case 'graph.node_started': {
+      const n = node(d.nodeId);
+      if (d.agent && KINDS[d.agent]) n.kind = d.agent;
+      applyStatus(d.nodeId, 'running', { startedAt: true });
+      feedRadioStyle(ts, 'graph.node_started', d.nodeId, (n.label === n.id ? '' : n.label) + (d.agent ? ' [' + d.agent + ']' : ''), '#eaf2ff');
+      break;
+    }
+    case 'graph.node_ended': {
+      const status = d.ok === false || d.cancelled ? 'error' : 'done';
+      applyStatus(d.nodeId, status);
+      feedRadioStyle(ts, 'graph.node_ended', d.nodeId, status + (d.durationMs != null ? ' ' + fmtDur(d.durationMs) : ''),
+        status === 'done' ? '#3cb46e' : '#dc4646');
+      break;
+    }
+    case 'verification.run': {
+      const v = (d.verdict || '').toLowerCase();
+      feedRadioStyle(ts, 'verify', '\u2014', 'verification.run ' + (d.verdict || '?') + ' strict=' + (d.strict ? 'on' : 'off'),
+        v.startsWith('pass') ? '#3cb46e' : v.startsWith('repair') ? '#dca03c' : '#dc4646');
+      const cand = [...state.nodes.values()].filter((x) => ['verify', 'spec', 'conformance'].includes(x.kind) && x.status === 'running').pop();
+      if (cand) flashNode(cand.id, '#dca03c', v.startsWith('pass') ? '#3cb46e' : '#dc4646');
+      break;
+    }
+    case 'subagent.metrics': {
+      const u = d.usage || {};
+      feedRadioStyle(ts, 'metrics', d.agentId || d.kind || '\u2014',
+        (d.kind || '') + (d.model ? ' \u00b7 ' + d.model : '') + (u.totalTokens ? ' \u00b7 ' + u.totalTokens + ' tok' : '') + (d.durationMs ? ' \u00b7 ' + fmtDur(d.durationMs) : ''),
+        '#66799a');
+      break;
+    }
+    case 'resource.snapshot':
+      feedRadioStyle(ts, 'budget', '\u2014', 'toolCalls ' + d.toolCallsUsed + '/' + d.toolCallsLimit + ' \u00b7 pressure ' + (d.pressure == null ? '\u2014' : d.pressure), '#5096e6');
+      break;
+    case 'verify.debt_open':
+      feedRadioStyle(ts, 'debt\u2191', d.taskId || '\u2014', d.description || '', '#9a50c8');
+      break;
+    case 'verify.debt_cleared':
+      feedRadioStyle(ts, 'debt\u2193', d.taskId || '\u2014', 'debt cleared', '#3cb46e');
+      break;
+    case 'file.applied': feedRadioStyle(ts, 'file.applied', '\u2014', d.path || '', '#3cb46e'); break;
+    case 'file.rejected': feedRadioStyle(ts, 'file.rejected', '\u2014', d.path || '', '#dc4646'); break;
+    case 'session.started': feedRadioStyle(ts, 'session', '\u2014', 'profile ' + (d.profile || '\u2014') + ' \u00b7 ' + (d.workspace || ''), '#5096e6'); break;
+    default: break;
+  }
+}
+
+/* ---------- brain / SSE / NDJSON frames: {type, ts, ...} ---------- */
+function handleBrain(ev) {
+  const ts = ev.ts ? fmtClock(new Date(ev.ts)) : fmtClock(new Date());
+  switch (ev.type) {
+    case 'agent_spawned': {
+      const id = ev.graphNodeId || ev.agentId;
+      const n = node(id);
+      n.isTentacle = !ev.graphNodeId;
+      if (ev.role && KINDS[ev.role]) n.kind = ev.role;
+      else if (n.isTentacle) n.kind = 'tentacle';
+      if (ev.title) n.label = ev.title;
+      if (ev.model) n.model = ev.model;
+      applyStatus(id, 'running', { startedAt: true });
+      layoutDirty = true;
+      feedRadioStyle(ts, 'spawn', id, (ev.title || '') + (ev.role ? ' [' + ev.role + ']' : '') + (ev.model ? ' \u00b7 ' + ev.model : ''), '#3fe0d4');
+      flashNode(id, '#3fe0d4');
+      break;
+    }
+    case 'agent_status': {
+      const st = { running: 'running', completed: 'done', failed: 'error', cancelled: 'skipped' }[ev.status] || null;
+      if (st) applyStatus(ev.agentId, st);
+      else flashNode(ev.agentId, '#66799a');
+      feedRadioStyle(ts, ev.status, ev.agentId, ev.message || '', st === 'done' ? '#3cb46e' : st === 'error' ? '#dc4646' : '#66799a');
+      break;
+    }
+    case 'agent_tool': {
+      const n = state.nodes.get(ev.agentId);
+      if (n) {
+        n.flash = Math.max(n.flash, 0.55);
+        n.flashColor = ev.status === 'failed' ? '#dc4646' : '#3fe0d4';
+        sparkAround(n, ev.status === 'failed' ? '#dc4646' : '#3fe0d4');
+      }
+      feedRadioStyle(ts, 'tool\u00b7' + (ev.status || ''), ev.agentId, (ev.tool || '') + (ev.summary ? ' \u00b7 ' + ev.summary : ''),
+        ev.status === 'failed' ? '#dc4646' : '#5096e6');
+      break;
+    }
+    case 'agent_ended': {
+      applyStatus(ev.agentId, ev.ok === false ? 'error' : 'done');
+      feedRadioStyle(ts, 'agent_ended', ev.agentId, (ev.reason || '') + (ev.durationMs ? ' \u00b7 ' + fmtDur(ev.durationMs) : ''),
+        ev.ok === false ? '#dc4646' : '#3cb46e');
+      break;
+    }
+    case 'kraken_progress': {
+      const p = ev.progress || ev;
+      if (p.phase) {
+        state.phase = p.phase;
+        feedRadioStyle(ts, 'phase', '\u2014', p.phase + (p.mode ? ' \u00b7 ' + p.mode : '') + (p.tentacles != null ? ' \u00b7 ' + p.tentacles + ' tentacles' : ''), '#3fe0d4');
+      }
+      break;
+    }
+    case 'kraken_metrics': {
+      const m = ev.metrics || ev;
+      feedRadioStyle(ts, 'metrics', '\u2014', 'pass ' + (m.verificationPass || 0) + ' fail ' + (m.verificationFail || 0) +
+        ' unk ' + (m.verificationUnknown || 0) + (m.repairTriggered ? ' \u00b7 repair' : ''), '#66799a');
+      break;
+    }
+    case 'log': {
+      const msg = ev.message || '';
+      if (handleSpecialLine(msg, ts)) return;
+      feedRadioStyle(ts, 'log', '\u2014', msg.slice(0, 130), '#66799a');
+      break;
+    }
+    case 'session_started': feedRadioStyle(ts, 'session', '\u2014', 'session ' + (ev.sessionId || ''), '#5096e6'); break;
+    case 'run_finished':
+      feedRadioStyle(ts, 'run_finished', '\u2014', (ev.status || '') + ' exit ' + (ev.exitCode == null ? '\u2014' : ev.exitCode),
+        ev.status === 'completed' ? '#3cb46e' : '#dc4646');
+      break;
+    default: break;
+  }
+}
+
+/* ---------- workbench markdown (topology + denormalized status) ---------- */
+function splitRow(raw) {
+  let s = raw.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((c) => c.trim());
+}
+function applyWorkbench(md) {
+  const text = String(md);
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const gm = text.match(/\*\*Goal:\*\*\s*(.*)/); if (gm) state.goal = gm[1].trim();
+  const im = text.match(/\*\*Graph id:\*\*\s*`?([^`\n]+)`?/); if (im) state.graphId = im[1].trim();
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] || '';
+    if (line.includes('|') && i + 1 < lines.length && /^\s*\|[\s-:|]+\|/.test(lines[i + 1] || '')) {
+      const header = splitRow(line).map((h) => h.toLowerCase());
+      if (header.includes('verdict') && header.includes('weakness')) {
+        const hasDeps = header.includes('deps');
+        i += 2;
+        let topologyChanged = false;
+        while (i < lines.length && (lines[i] || '').includes('|') && (lines[i] || '').trim() !== '') {
+          const c = splitRow(lines[i]);
+          const id = c[0];
+          if (id) {
+            const n = node(id);
+            n.label = c[1] || n.label;
+            n.kind = c[2] || n.kind;
+            const depsCell = hasDeps ? (c[3] || '') : '';
+            const newDeps = depsCell ? depsCell.split(',').map((s) => s.trim()).filter(Boolean) : n.deps;
+            if (newDeps.join(',') !== n.deps.join(',')) { n.deps = newDeps; topologyChanged = true; }
+            n.scope = (hasDeps ? c[4] : c[3]) || '';
+            const em = (hasDeps ? c[5] : c[4]) || '';
+            const status = { '\u25cb': 'pending', '\u2191': 'running', '\u2713': 'done', '\u2717': 'error', '\u2013': 'skipped' }[em] || em || n.status;
+            if (status !== n.status) applyStatus(id, status);
+            n.verdict = (hasDeps ? c[6] : c[5]) || n.verdict;
+            const w = parseFloat(hasDeps ? c[7] : c[6]);
+            if (Number.isFinite(w)) n.weakness = w;
+            n.model = (hasDeps ? c[8] : c[7]) || n.model;
+          }
+          i++;
+        }
+        if (topologyChanged) { layoutDirty = true; rebuildEdges(); }
+        continue;
+      }
+      i += 2;
+      while (i < lines.length && (lines[i] || '').includes('|') && (lines[i] || '').trim() !== '') i++;
+      continue;
+    }
+    i++;
+  }
+  for (const line of lines) {
+    const m = line.match(/^-\s+(\d{2}:\d{2}:\d{2})\s+(.*)$/);
+    if (m) handleSpecialLine(m[2], m[1]);
+  }
+}
+
+/* ---------- plan JSON: {id, nodes:[{id, kind, label, deps, ...}]} ---------- */
+function applyPlan(json) {
+  const nodes = json && json.nodes ? json.nodes : json;
+  if (!Array.isArray(nodes)) return;
+  for (const p of nodes) {
+    if (!p || !p.id) continue;
+    const n = node(p.id);
+    n.kind = p.kind || n.kind;
+    n.label = p.label || n.label;
+    if (Array.isArray(p.deps) && p.deps.join(',') !== n.deps.join(',')) n.deps = p.deps.slice();
+    if (p.status && p.status !== n.status) applyStatus(p.id, p.status);
+  }
+  layoutDirty = true;
+  rebuildEdges();
+  feedRadioStyle(fmtClock(new Date()), 'plan', '\u2014', 'plan loaded \u00b7 ' + nodes.length + ' nodes', '#5096e6');
+}
+
+/* ---------- line dispatcher (auto-detect format) ---------- */
+function ingestLine(raw) {
+  const line = String(raw == null ? '' : raw).trim();
+  if (!line) return;
+  if (line[0] !== '{') { handleSpecialLine(line); return; }
+  let ev;
+  try { ev = JSON.parse(line); } catch (e) { handleSpecialLine(line); return; }
+  if (!ev || typeof ev !== 'object') return;
+  if (typeof ev.schemaVersion === 'number' && ev.kind && typeof ev.ts === 'number') { handleSpine(ev); return; }
+  if (ev.type && typeof ev.type === 'string') { handleBrain(ev); return; }
+  if (ev.kind && ev.ts && ev.agent !== undefined) { handleRadio(ev); return; }
+  if (ev.nodes) { applyPlan(ev); return; }
+}
+function ingestText(text) {
+  for (const line of String(text == null ? '' : text).split('\n')) ingestLine(line);
+}
+window.KrakenNeurons = { ingestText, ingestLine, applyWorkbench, applyPlan, state };
+
+/* =========================================================================
+   sources
+   ========================================================================= */
+const sources = { handles: [], offsets: new Map(), http: null, httpWatch: null, sse: null, demo: null, radioDir: null };
+
+function setSource(mode, label) {
+  state.source.mode = mode; state.source.label = label;
+  const b = $('srcbadge');
+  b.className = 'badge ' + (mode === 'demo' ? 'demo' : mode === 'off' ? '' : 'live');
+  $('srctext').textContent = label;
+  const hero = $('hero');
+  if (hero) hero.classList.toggle('show', mode === 'off');
+}
+
+/* --- 0. folder connect: remember the workspace folder and tail it live forever.
+        Works from file:// (IndexedDB keeps the handle; Chromium re-asks one click
+        per origin after a restart). New radio files = new runs = picked up. --- */
+let pendingFolder = null;
+function idb(mode, fn) {
+  return new Promise((res, rej) => {
+    if (!window.indexedDB) return rej(new Error('no idb'));
+    const r = indexedDB.open('kraken-neurons', 1);
+    r.onupgradeneeded = () => { try { r.result.createObjectStore('kraken-neurons'); } catch (e) { /* exists */ } };
+    r.onsuccess = () => {
+      try {
+        const rq = fn(r.result.transaction('kraken-neurons', mode).objectStore('kraken-neurons'));
+        rq.onsuccess = () => res(rq.result);
+        rq.onerror = () => rej(rq.error);
+      } catch (e) { rej(e); }
+    };
+    r.onerror = () => rej(r.error);
+  });
+}
+async function findRadioDir(dir) {
+  if (/^radio$/i.test(dir.name)) return dir;
+  const radio = await dir.getDirectoryHandle('radio', { create: false }).catch(() => null);
+  if (radio) return radio; // picked the repo root or .zelari/
+  const zelari = await dir.getDirectoryHandle('.zelari', { create: false }).catch(() => null);
+  if (zelari) {
+    const r2 = await zelari.getDirectoryHandle('radio', { create: false }).catch(() => null);
+    if (r2) return r2;
+  }
+  return null;
+}
+async function attachFolder(dir) {
+  const radioDir = await findRadioDir(dir);
+  if (!radioDir) { setSource('off', 'no .zelari/radio inside ' + dir.name); return; }
+  sources.radioDir = radioDir;
+  setSource('live', 'LIVE \u00b7 ' + dir.name + ' \u2192 .zelari/radio');
+  feedRadioStyle(fmtClock(new Date()), 'folder', '\u2014', 'watching .zelari/radio \u2014 runs started later are picked up automatically', '#3fe0d4');
+  await scanFolder(true);
+}
+async function connectFolder() {
+  stopDemo();
+  if (!window.showDirectoryPicker) { setSource('off', 'folder connect needs a Chromium browser'); return; }
+  let dir = pendingFolder;
+  if (dir) {
+    pendingFolder = null;
+    try {
+      const perm = await dir.requestPermission({ mode: 'read' });
+      if (perm !== 'granted') { setSource('off', 'folder permission denied'); return; }
+    } catch (e) { setSource('off', 'folder permission failed'); return; }
+  } else {
+    try { dir = await window.showDirectoryPicker({ mode: 'read' }); }
+    catch (e) { return; } // cancelled
+    try { await idb('readwrite', (s) => s.put(dir, 'zelariDir')); } catch (e) { /* session-only */ }
+  }
+  await attachFolder(dir);
+}
+async function restoreFolder() {
+  try {
+    const dir = await idb('readonly', (s) => s.get('zelariDir'));
+    if (!dir) return false;
+    const perm = await dir.queryPermission({ mode: 'read' });
+    if (perm === 'granted') { await attachFolder(dir); return true; }
+    pendingFolder = dir;
+    setSource('off', '\u25b6 connect .zelari folder');
+    feedRadioStyle(fmtClock(new Date()), 'help', '\u2014', 'resume the remembered .zelari folder \u2014 click \ud83d\udd0c .zelari', '#dca03c');
+    return true;
+  } catch (e) { return false; }
+}
+/* register every radio/workbench/plan file not yet tailed; cold files get their
+   history skipped (offset = size) so only FUTURE events stream in. */
+async function scanFolder(initial) {
+  const radioDir = sources.radioDir;
+  if (!radioDir) return;
+  const known = new Set(sources.handles.map((h) => h.name));
+  try {
+    for await (const entry of radioDir.values()) {
+      if (entry.kind !== 'file') continue;
+      const nm = entry.name;
+      const isRadio = /\.jsonl$/.test(nm);
+      const isSnap = /^(workbench|plan)-/.test(nm) && /\.(md|json)$/.test(nm);
+      if (!isRadio && !isSnap) continue;
+      if (known.has(nm)) continue;
+      let size = 0;
+      try { size = (await entry.getFile()).size; } catch (e) { continue; }
+      let seed = null;
+      if (isRadio && size > 0) {
+        try {
+          const tailText = await entry.slice(Math.max(0, size - 8192)).text();
+          const ts = lastTsMs(tailText);
+          if (ts && Date.now() - ts < 20 * 60 * 1000) seed = tailText; // hot session: keep recent context
+        } catch (e) { /* ignore */ }
+      }
+      sources.handles.push(entry);
+      sources.offsets.set(nm, size);
+      if (seed) ingestText(seed);
+      if (initial && isRadio) {
+        feedRadioStyle(fmtClock(new Date()), 'tail', nm, seed ? 'hot session \u00b7 recent context loaded' : 'attached \u00b7 new events will stream', '#5096e6');
+      }
+      known.add(nm);
+    }
+  } catch (e) { /* handle revoked */ }
+}
+
+/* --- 1. demo: scripted kraken run on the real radio schema --- */
+const DEMO_PLAN = [
+  { id: 'e1', kind: 'explore', label: 'map auth middleware', deps: [] },
+  { id: 'e2', kind: 'explore', label: 'map api gateway', deps: [] },
+  { id: 'g1', kind: 'general', label: 'harden auth middleware', deps: ['e1'] },
+  { id: 'g2', kind: 'general', label: 'repair gateway retry', deps: ['e2'] },
+  { id: 'g3', kind: 'general', label: 'add regression tests', deps: ['e1', 'e2'] },
+  { id: 'spec', kind: 'spec', label: 'spec review auth contract', deps: ['g1'] },
+  { id: 'verify-g1', kind: 'verify', label: 'verify harden auth', deps: ['g1'] },
+  { id: 'verify-g2', kind: 'verify', label: 'verify gateway retry', deps: ['g2'] },
+  { id: 'verify-g3', kind: 'verify', label: 'verify regression tests', deps: ['g3'] },
+  { id: 'merge', kind: 'merge', label: 'assemble final patch', deps: ['spec', 'verify-g1', 'verify-g2', 'verify-g3'] },
+];
+function buildDemoScript() {
+  const steps = [];
+  const A = (at, kind, agent, description, extra, nodeId) =>
+    steps.push({ at, fn: () => handleRadio(Object.assign({ ts: new Date().toISOString(), kind, agent, description }, extra || {}, nodeId ? { nodeId } : {})) });
+  const T = (at, text) => steps.push({ at, fn: () => handleSpecialLine(text) });
+  const P = (at, phase) => steps.push({ at, fn: () => handleBrain({ type: 'kraken_progress', progress: { phase, mode: 'build' } }) });
+
+  P(100, 'planning');
+  A(200, 'node_start', 'explore', 'map auth middleware', {}, 'e1');
+  A(600, 'node_start', 'explore', 'map api gateway', {}, 'e2');
+  A(900, 'spawn', 'explore', 'map auth middleware', { thoroughness: 'medium' });
+  A(1100, 'spawn', 'explore', 'map api gateway', { thoroughness: 'quick' });
+  P(1500, 'exploring');
+  A(2200, 'progress', 'explore', 'walking src/auth/**', { nodeId: 'e1' });
+  A(3400, 'progress', 'explore', 'walking src/gateway/**', { nodeId: 'e2' });
+  A(5000, 'node_end', 'explore', 'map auth middleware', { ok: true, durationMs: 4100, model: 'grok-4.1-mini', detail: '14 symbols \u00b7 6 files' }, 'e1');
+  A(5600, 'node_end', 'explore', 'map api gateway', { ok: true, durationMs: 4700, model: 'grok-4.1-mini', detail: '9 symbols \u00b7 4 files' }, 'e2');
+  P(5900, 'implementing');
+  A(6000, 'node_start', 'general', 'harden auth middleware', { model: 'grok-4.1' }, 'g1');
+  A(6200, 'node_start', 'general', 'repair gateway retry', { model: 'grok-4.1' }, 'g2');
+  A(6400, 'node_start', 'general', 'add regression tests', { model: 'grok-4.1' }, 'g3');
+  A(7200, 'progress', 'general', 'editing src/auth/middleware.ts', { nodeId: 'g1' });
+  A(8000, 'progress', 'general', 'model grok-4-fast unavailable \u2014 retrying with grok-4.1', { nodeId: 'g2' });
+  T(9000, '[quality_escalation] rerun on parent model (weak output weakness=0.87 threshold=0.85) label="add regression tests"');
+  A(10500, 'node_end', 'general', 'harden auth middleware', { ok: true, durationMs: 4500, model: 'grok-4.1', detail: 'verify_hint \u00b7 3 files touched' }, 'g1');
+  A(11000, 'node_start', 'spec', 'spec review auth contract', { model: 'grok-4.1' }, 'spec');
+  A(11200, 'node_start', 'verify', 'verify harden auth', { model: 'grok-4.1' }, 'verify-g1');
+  P(11500, 'verifying');
+  A(12500, 'node_end', 'verify', 'verify harden auth', { ok: true, durationMs: 1300, detail: '\u00b7 pass w=0.31 \u00b7 4 requirements met' }, 'verify-g1');
+  A(13000, 'node_end', 'general', 'repair gateway retry', { ok: true, durationMs: 6800, model: 'grok-4.1', detail: 'retry budget used 0/3' }, 'g2');
+  A(13400, 'node_start', 'verify', 'verify gateway retry', { model: 'grok-4.1' }, 'verify-g2');
+  A(15000, 'node_end', 'verify', 'verify gateway retry', { ok: true, durationMs: 1600, detail: '\u00b7 fail w=0.42 \u00b7 2 findings' }, 'verify-g2');
+  P(15200, 'repairing');
+  A(15400, 'node_fix', 'fix', 'rework round 1 for repair gateway retry', { detail: 'verify-g2 fail \u2192 rework-g2-1', nodeId: 'rework-g2-1' });
+  A(15600, 'node_fix', 'verify', 'verify rework-g2-1', { detail: 'rework pair for verify-g2', nodeId: 'verify-rework-g2-1' });
+  A(15800, 'node_start', 'fix', 'rework round 1 for repair gateway retry', { nodeId: 'rework-g2-1' });
+  A(16000, 'node_end', 'general', 'add regression tests', { ok: true, durationMs: 9600, model: 'grok-4.1', detail: '12 tests added' }, 'g3');
+  T(16200, '[quality_escalation] replaced weak output (weakness=0.87 threshold=0.85) label="add regression tests"');
+  A(16600, 'node_start', 'verify', 'verify regression tests', { model: 'grok-4.1' }, 'verify-g3');
+  A(17500, 'node_end', 'fix', 'rework round 1 for repair gateway retry', { ok: true, durationMs: 1700, model: 'grok-4.1', detail: 'patch replaced' }, 'rework-g2-1');
+  A(17800, 'node_start', 'verify', 'verify rework-g2-1', { nodeId: 'verify-rework-g2-1' });
+  A(18500, 'node_end', 'spec', 'spec review auth contract', { ok: true, durationMs: 7500, detail: '\u00b7 pass w=0.22 \u00b7 6 requirements met' }, 'spec');
+  A(19500, 'node_end', 'verify', 'verify regression tests', { ok: true, durationMs: 2900, detail: '\u00b7 pass w=0.35 \u00b7 8 requirements met' }, 'verify-g3');
+  A(20500, 'node_end', 'verify', 'verify rework-g2-1', { ok: true, durationMs: 2700, detail: '\u00b7 pass w=0.28 \u00b7 2 findings resolved' }, 'verify-rework-g2-1');
+  A(21000, 'node_start', 'merge', 'assemble final patch', { model: 'grok-4.1' }, 'merge');
+  A(22000, 'node_meter', 'weakness-meter', 'verify pack meter', { detail: 'v=pass specificity=0.72 weakness=0.28 model=grok-4.1 dur=1.2s', nodeId: 'verify-g3' });
+  A(23500, 'node_end', 'merge', 'assemble final patch', { ok: true, durationMs: 2500, detail: '4 patches \u00b7 0 conflicts' }, 'merge');
+  P(23800, 'completed');
+  A(24000, 'graph_converged', 'graph', 'kraken graph converged', { ok: true, detail: 'backtest clean' });
+  return steps;
+}
+
+function resetWorld() {
+  state.nodes.clear(); state.order.length = 0; state.edges.length = 0;
+  state.pulses.length = 0; state.waves.length = 0; state.sparks.length = 0;
+  state.escalations = 0; state.verdictsPass = 0; state.verdictsFail = 0;
+  state.selected = null; $('detail').classList.remove('open');
+  layoutDirty = true;
+}
+
+function startDemo() {
+  stopDemo();
+  state.demoWanted = true;
+  resetWorld();
+  state.goal = 'Fix flaky auth middleware + tighten verify pack';
+  state.graphId = 'demo-' + Math.random().toString(36).slice(2, 8);
+  state.phase = 'planning';
+  applyPlan({ nodes: DEMO_PLAN });
+  const steps = buildDemoScript();
+  const t0 = performance.now();
+  let idx = 0;
+  sources.demo = setInterval(() => {
+    if (state.paused) return;
+    const el = performance.now() - t0;
+    while (idx < steps.length && steps[idx].at <= el) steps[idx++].fn();
+    if (idx >= steps.length) {
+      stopDemo();
+      setTimeout(() => { if (state.demoWanted) startDemo(); }, 6000);
+    }
+  }, 60);
+  setSource('demo', 'DEMO \u00b7 simulated run');
+  $('b-demo').classList.add('on');
+}
+function stopDemo() {
+  state.demoWanted = false;
+  if (sources.demo) { clearInterval(sources.demo); sources.demo = null; }
+  $('b-demo').classList.remove('on');
+}
+
+/* --- 2. live file tail via File System Access API (works from file://) --- */
+async function openLogs() {
+  stopDemo();
+  let handles = [];
+  try {
+    handles = await window.showOpenFilePicker({
+      multiple: true,
+      types: [{ description: 'Kraken logs', extensions: ['jsonl', 'json', 'md'] }],
+    });
+  } catch (err) {
+    setSource('off', 'NO SOURCE \u00b7 drop files or use demo');
+    return;
+  }
+  attachHandles(handles);
+}
+function attachHandles(handles) {
+  sources.handles = handles;
+  sources.offsets = new Map();
+  for (const h of handles) sources.offsets.set(h.name, 0);
+  setSource('live', 'LIVE TAIL \u00b7 ' + handles.map((h) => h.name).join(' + '));
+}
+async function pollHandles() {
+  for (const h of sources.handles) {
+    try {
+      const file = await h.getFile();
+      let off = sources.offsets.get(h.name) || 0;
+      if (file.size < off) off = 0;
+      if (file.size > off) {
+        const chunk = await file.slice(off).text();
+        sources.offsets.set(h.name, file.size);
+        routeChunk(h.name, chunk);
+      }
+    } catch (e) { /* keep polling */ }
+  }
+}
+function routeChunk(name, chunk) {
+  if (/\.md$/i.test(name)) { applyWorkbench(chunk); return; }
+  if (/\.json$/i.test(name)) {
+    try { const j = JSON.parse(chunk); if (j && (Array.isArray(j.nodes) || Array.isArray(j))) applyPlan(j); } catch (e) { /* partial */ }
+    return;
+  }
+  ingestText(chunk);
+}
+
+/* --- 3. HTTP auto-tail (page served from the repo root) --- */
+async function httpList(dir) {
+  try {
+    const res = await fetch(dir, { cache: 'no-store' });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const out = [];
+    const re = /<a\s+href="([^"?/][^"]*)"/gi;
+    let m;
+    while ((m = re.exec(html))) {
+      const href = decodeURIComponent(m[1]);
+      if (!href.startsWith('?') && !href.endsWith('/')) out.push(href);
+    }
+    return out;
+  } catch (e) { return []; }
+}
+/* newest event timestamp in a JSONL text (radio ts = ISO string, spine ts = ms) */
+function lastTsMs(text) {
+  const lines = String(text).trim().split('\n');
+  for (let i = lines.length - 1; i >= 0 && i > lines.length - 40; i--) {
+    try {
+      const ev = JSON.parse(lines[i]);
+      const ts = typeof ev.ts === 'number' ? ev.ts : Date.parse(ev.ts);
+      if (Number.isFinite(ts)) return ts;
+    } catch (e) { /* keep scanning */ }
+  }
+  return 0;
+}
+/* fetch candidates in small parallel pools, keep the HOTTEST ones (by last event ts) */
+async function probeHot(urls, max) {
+  const probed = [];
+  for (let i = 0; i < urls.length; i += 16) {
+    await Promise.all(urls.slice(i, i + 16).map(async (u) => {
+      try {
+        const text = await (await fetch(u, { cache: 'no-store' })).text();
+        probed.push({ url: u, name: u.split('/').pop(), ts: lastTsMs(text), text });
+      } catch (e) { /* skip */ }
+    }));
+  }
+  probed.sort((a, b) => b.ts - a.ts);
+  const HOT_MS = 20 * 60 * 1000;
+  const now = Date.now();
+  const hot = probed.filter((p) => now - p.ts < HOT_MS).slice(0, max);
+  const list = hot.length ? hot : probed.slice(0, Math.min(3, max));
+  // only genuinely HOT sessions get their history seeded; cold fallbacks are
+  // attached with offset = size so they contribute zero ghost nodes
+  for (const p of list) p.hot = now - p.ts < HOT_MS;
+  return list;
+}
+async function startHttpTail() {
+  stopDemo();
+  if (!/^https?:$/.test(location.protocol)) {
+    setSource('off', 'HTTP TAIL needs the page served over http');
+    feedRadioStyle(fmtClock(new Date()), 'help', '—', 'serve the repo root (npx serve .) and open this page via http://127.0.0.1', '#dca03c');
+    return;
+  }
+  setSource('off', 'scanning .zelari/ \u2026');
+  // NOTE: every fetch target must be ABSOLUTE from the repo root — the page lives
+  // in docs/viz/, so relative URLs would silently 404 against that folder.
+  const base = location.href.replace(/docs\/viz\/[^/]*$/, '');
+  const radioFiles = await httpList(base + '.zelari/radio/');
+  const radioNames = radioFiles.filter((n) => n.endsWith('.jsonl'));
+  const wbNames = radioFiles.filter((n) => n.startsWith('workbench-') && n.endsWith('.md'));
+  const planNames = radioFiles.filter((n) => n.startsWith('plan-') && n.endsWith('.json'));
+  const sessDirs = (await httpList(base + '.zelari/sessions/')).filter((n) => n.endsWith('/'));
+  const spineCands = [];
+  for (const d of sessDirs.slice(-30)) {
+    const files = await httpList(base + '.zelari/sessions/' + d);
+    if (files.includes('events.jsonl')) spineCands.push(base + '.zelari/sessions/' + d + 'events.jsonl');
+  }
+  if (!radioNames.length && !wbNames.length) {
+    setSource('off', 'no .zelari/radio logs found');
+    feedRadioStyle(fmtClock(new Date()), 'help', '—', 'no kraken radio logs under .zelari/radio — start a run first', '#dca03c');
+    return;
+  }
+  // only tail sessions that are (or were recently) HOT — a workspace can hold hundreds of old runs
+  const hotRadio = await probeHot(radioNames.map((n) => base + '.zelari/radio/' + n), 6);
+  const hotSpine = await probeHot(spineCands, 3);
+  const targets = [
+    ...hotRadio.map((p) => ({ url: p.url, name: p.name, kind: 'jsonl', seed: p.hot ? p.text : null, skipTo: p.text.length })),
+    ...wbNames.slice(-1).map((n) => ({ url: base + '.zelari/radio/' + n, name: n, kind: 'md', seed: null, skipTo: 0 })),
+    ...planNames.slice(-1).map((n) => ({ url: base + '.zelari/radio/' + n, name: n, kind: 'json', seed: null, skipTo: 0 })),
+    ...hotSpine.map((p) => ({ url: p.url, name: p.name, kind: 'jsonl', seed: p.hot ? p.text : null, skipTo: p.text.length })),
+  ];
+  sources.http = { targets, offsets: new Map(), seen: new Set(radioNames) };
+  for (const t of targets) {
+    if (t.seed != null) {
+      // hot session: seed with the last 200 lines of context, then tail the new bytes
+      ingestText(t.seed.split('\n').slice(-200).join('\n'));
+      sources.http.offsets.set(t.name, t.seed.length);
+    } else if (t.kind === 'jsonl') {
+      sources.http.offsets.set(t.name, t.skipTo || 0); // cold: history skipped, watch for new events
+    } else {
+      sources.http.offsets.set(t.name, 0);
+    }
+  }
+  setSource('live', 'HTTP TAIL \u00b7 ' + hotRadio.length + ' hot sessions');
+  feedRadioStyle(fmtClock(new Date()), 'tail', '\u2014',
+    'tailing ' + hotRadio.length + ' radio + ' + hotSpine.length + ' spine session(s), newest first', '#3fe0d4');
+  // watchdog: a NEW radio file means a run just started — pick it up automatically.
+  // `seen` starts pre-populated with every file the boot probe already evaluated,
+  // so only genuinely new names are candidates (no cold-file re-churn).
+  if (sources.httpWatch) clearInterval(sources.httpWatch);
+  sources.httpWatch = setInterval(async () => {
+    const H = sources.http;
+    if (!H) { clearInterval(sources.httpWatch); sources.httpWatch = null; return; }
+    if (!H.seen) H.seen = new Set(H.targets.map((t) => t.name));
+    const names = await httpList(base + '.zelari/radio/');
+    const fresh = names.filter((n) => /\.jsonl$/.test(n) && !H.seen.has(n));
+    if (!fresh.length) return;
+    for (const n of fresh) H.seen.add(n); // evaluated once, whatever the verdict
+    const probed = await probeHot(fresh.map((n) => base + '.zelari/radio/' + n), fresh.length);
+    for (const p of probed) {
+      if (!p.hot) continue; // old cold file that simply appeared — not a live run
+      H.targets.push({ url: p.url, name: p.name, kind: 'jsonl', seed: p.text });
+      ingestText(p.text.split('\n').slice(-200).join('\n'));
+      H.offsets.set(p.name, p.text.length);
+      feedRadioStyle(fmtClock(new Date()), 'watch', p.name, 'new session appeared \u00b7 tailing live', '#3fe0d4');
+    }
+  }, 8000);
+}
+async function pollHttp() {
+  const H = sources.http; if (!H) return;
+  for (const t of H.targets) {
+    try {
+      const res = await fetch(t.url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const text = await res.text();
+      let off = H.offsets.get(t.name) || 0;
+      if (t.kind !== 'jsonl') {
+        if (text.length !== off) { H.offsets.set(t.name, text.length); routeChunk(t.name, text); }
+      } else {
+        if (text.length < off) off = 0;
+        if (text.length > off) {
+          H.offsets.set(t.name, text.length);
+          ingestText(text.slice(off));
+        }
+      }
+    } catch (e) { /* keep polling */ }
+  }
+}
+
+/* --- 4. companion SSE (zelari-code serve) --- */
+async function startSSE() {
+  stopDemo();
+  const base = ($('sse-base').value || 'http://127.0.0.1:7421').replace(/\/$/, '');
+  const token = $('sse-token').value.trim();
+  if (!token) {
+    setSource('off', 'SSE needs the bearer token');
+    feedRadioStyle(fmtClock(new Date()), 'help', '\u2014', 'token is in ~/.zelari-code/companion.token', '#dca03c');
+    return;
+  }
+  const auth = { Authorization: 'Bearer ' + token };
+  try {
+    const runs = await (await fetch(base + '/v1/runs', { headers: auth })).json();
+    const runId = (runs.active && runs.active.id) ||
+      ((runs.recent || []).find((r) => r.status === 'running') || {}).id ||
+      ((runs.recent || [])[0] || {}).id;
+    if (!runId) throw new Error('no runs');
+    setSource('live', 'SSE LIVE \u00b7 ' + runId);
+    feedRadioStyle(fmtClock(new Date()), 'sse', runId, 'connected to companion stream', '#3fe0d4');
+    const res = await fetch(base + '/v1/runs/' + runId + '/events', { headers: auth });
+    if (!res.ok || !res.body) throw new Error('stream failed ' + res.status);
+    sources.sse = { abort: false };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || (sources.sse && sources.sse.abort)) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('data:')) {
+            const payload = line.slice(5).trim();
+            if (payload) ingestLine(payload);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    setSource('off', 'SSE failed \u00b7 ' + (err && err.message ? err.message : 'error'));
+    feedRadioStyle(fmtClock(new Date()), 'error', 'sse', 'connection failed (CORS from file://? serve this page via http://127.0.0.1)', '#dc4646');
+  }
+}
+
+setInterval(() => {
+  pollHandles();
+  if (sources.http) pollHttp();
+}, 500);
+setInterval(() => { if (sources.radioDir) scanFolder(false); }, 8000);
+
+/* drag & drop (file handles keep tailing in Chromium) */
+window.addEventListener('dragover', (e) => { e.preventDefault(); });
+window.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  stopDemo();
+  const items = [...(e.dataTransfer && e.dataTransfer.items ? e.dataTransfer.items : [])];
+  const handles = [];
+  for (const it of items) {
+    if (it.kind !== 'file') continue;
+    if (it.getAsFileSystemHandle) {
+      try {
+        const h = await it.getAsFileSystemHandle();
+        if (h && h.kind === 'file') { handles.push(h); continue; }
+      } catch (err) { /* fall through */ }
+    }
+    const f = it.getAsFile();
+    if (f) handles.push({ name: f.name, kind: 'file', getFile: async () => f });
+  }
+  if (handles.length) attachHandles(handles);
+});
+
+/* =========================================================================
+   renderer — canvas 2D with hand-rolled 3D projection (zero dependencies)
+   ========================================================================= */
+const canvas = $('stage');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+const cam = { yaw: 0.6, pitch: 0.35, dist: 26, auto: true };
+function resetView() { cam.yaw = 0.6; cam.pitch = 0.35; cam.dist = 26; cam.auto = true; }
+
+let dragging = false, lastX = 0, lastY = 0, moved = 0;
+canvas.addEventListener('mousedown', (e) => { dragging = true; moved = 0; lastX = e.clientX; lastY = e.clientY; canvas.classList.add('dragging'); });
+window.addEventListener('mouseup', () => { dragging = false; canvas.classList.remove('dragging'); });
+window.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  moved += Math.abs(dx) + Math.abs(dy);
+  cam.yaw += dx * 0.005; cam.pitch = clamp(cam.pitch + dy * 0.005, -1.2, 1.2);
+  cam.auto = false;
+  lastX = e.clientX; lastY = e.clientY;
+});
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  cam.dist = clamp(cam.dist * (1 + Math.sign(e.deltaY) * 0.08), 10, 90);
+}, { passive: false });
+
+function project(p) {
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const x1 = p.x * cy - p.z * sy;
+  const z1 = p.x * sy + p.z * cy;
+  const y1 = p.y * cp - z1 * sp;
+  const z2 = p.y * sp + z1 * cp;
+  const depth = cam.dist - z2;
+  const f = (Math.min(W, H) * 0.85) / Math.max(0.1, depth);
+  return { x: W / 2 + x1 * f * 0.5, y: H / 2 - y1 * f * 0.5, d: depth, s: f * 0.5 };
+}
+function depthAlpha(d) { return clamp(1.35 - d / 26, 0.12, 1); }
+function hexA(hex, a) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + clamp(a, 0, 1).toFixed(3) + ')';
+}
+
+const DUST = [];
+for (let i = 0; i < 380; i++) {
+  const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), r = 22 + Math.random() * 40;
+  DUST.push({ x: Math.sin(ph) * Math.cos(th) * r, y: Math.cos(ph) * r * 0.7, z: Math.sin(ph) * Math.sin(th) * r });
+}
+
+function drawBackground() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#04070f'); g.addColorStop(0.55, '#071020'); g.addColorStop(1, '#03060c');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const neb = [
+    { x: W * 0.28, y: H * 0.4, r: Math.min(W, H) * 0.5, c: 'rgba(70, 40, 140, 0.10)' },
+    { x: W * 0.72, y: H * 0.6, r: Math.min(W, H) * 0.45, c: 'rgba(20, 90, 120, 0.10)' },
+    { x: W * 0.5, y: H * 0.5, r: Math.min(W, H) * 0.35, c: 'rgba(30, 30, 90, 0.12)' },
+  ];
+  for (const n of neb) {
+    const rg = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
+    rg.addColorStop(0, n.c); rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rg; ctx.fillRect(n.x - n.r, n.y - n.r, n.r * 2, n.r * 2);
+  }
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of DUST) {
+    const q = project(p);
+    if (q.d < 2) continue;
+    ctx.fillStyle = 'rgba(140, 180, 230,' + (depthAlpha(q.d) * 0.35).toFixed(3) + ')';
+    ctx.fillRect(q.x, q.y, 1.4, 1.4);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function ctrlPoint(a, b) {
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, mz = (a.z + b.z) / 2;
+  const h = hashStr(a.x.toFixed(2) + ',' + b.y.toFixed(2));
+  return { x: mx + (rnd01(h) - 0.5) * 1.2, y: my + (rnd01(h + 1) - 0.5) * 1.2, z: mz + (rnd01(h + 2) - 0.5) * 1.2 };
+}
+function qPoint(a, c, b, t) {
+  const u = 1 - t;
+  return {
+    x: u * u * a.x + 2 * u * t * c.x + t * t * b.x,
+    y: u * u * a.y + 2 * u * t * c.y + t * t * b.y,
+    z: u * u * a.z + 2 * u * t * c.z + t * t * b.z,
+  };
+}
+
+function drawEdges() {
+  for (const e of state.edges) {
+    const A = state.nodes.get(e.a), B = state.nodes.get(e.b);
+    if (!A || !B) continue;
+    const pa = project(A.pos), pb = project(B.pos), pc = project(ctrlPoint(A.pos, B.pos));
+    const alpha = Math.min(depthAlpha(pa.d), depthAlpha(pb.d)) * (0.13 + e.heat * 0.5);
+    ctx.strokeStyle = hexA(e.dash ? '#e68232' : '#5a96dc', alpha);
+    ctx.lineWidth = 0.7 + e.heat * 1.4;
+    ctx.beginPath();
+    ctx.moveTo(pa.x, pa.y);
+    ctx.quadraticCurveTo(pc.x, pc.y, pb.x, pb.y);
+    ctx.stroke();
+    e.heat = Math.max(0, e.heat - 0.02);
+  }
+}
+
+let hitboxes = [];
+function drawNode(n, t) {
+  const p = project(n.pos);
+  const base = n.isTentacle ? 2.4 : 3.6;
+  const pulse = n.status === 'running' ? 1 + 0.14 * Math.sin(t * 0.006 + (hashStr(n.id) % 100) / 10) : 1;
+  // a "running" node untouched for 10 minutes is a ghost of a finished tentacle — park it
+  if (n.status === 'running' && (t - n.lastTouched) > 600000) n.status = 'idle';
+  const born = clamp((performance.now() - n.aliveAt) / 500, 0, 1);
+  const r = Math.max(1.5, base * (p.s / 6) * pulse * (0.5 + 0.5 * born) * (n.id === state.selected ? 1.5 : 1) * (1 + n.flash * 0.35));
+  const kind = kindOf(n.kind);
+  const a = depthAlpha(p.d);
+
+  // soft halo (no additive blending — additive glow was blowing out to white)
+  const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 4);
+  g.addColorStop(0, hexA(kind.c, 0.4 * a));
+  g.addColorStop(0.4, hexA(n.flash > 0.05 ? n.flashColor : kind.c, 0.14 * a * (0.6 + n.flash)));
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(p.x, p.y, r * 4, 0, Math.PI * 2); ctx.fill();
+  // core
+  const g2 = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+  g2.addColorStop(0, hexA('#ffffff', 0.55 * a));
+  g2.addColorStop(0.55, hexA(kind.c, 0.8 * a));
+  g2.addColorStop(1, hexA(kind.c, 0.06 * a));
+  ctx.fillStyle = g2;
+  ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+
+  const ringColor = { running: '#3fe0d4', done: '#3cb46e', error: '#dc4646', pending: '#788cb4', skipped: '#66799a', idle: '#4a5a75' }[n.status] || '#66799a';
+  ctx.strokeStyle = hexA(n.ring > 0 ? n.ringColor : ringColor, (0.3 + 0.35 * n.ring) * a);
+  ctx.lineWidth = 1 + n.ring * 1.5;
+  ctx.beginPath(); ctx.arc(p.x, p.y, r * (1.4 + n.ring * 1.0), 0, Math.PI * 2); ctx.stroke();
+
+  if (n.weakness != null && ['verify', 'spec', 'conformance'].includes(n.kind)) {
+    const w = n.weakness;
+    ctx.fillStyle = w < 0.4 ? '#2da567' : w < 0.7 ? '#d99a2b' : '#c34a4a';
+    ctx.beginPath(); ctx.arc(p.x + r * 1.8, p.y - r * 1.8, 2, 0, Math.PI * 2); ctx.fill();
+  }
+
+  n.flash = Math.max(0, n.flash - 0.055);
+  n.ring = Math.max(0, n.ring - 0.05);
+
+  const want = state.showLabels && (n.id === state.selected || n.status === 'running' || p.s > 7.5);
+  if (want) {
+    const label = (n.label && n.label !== n.id) ? n.id : (n.label || n.id);
+    ctx.font = '10px ui-monospace, Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(2, 4, 10, 0.55)';
+    ctx.fillText(label, p.x + 1, p.y + r * 2.4 + 1);
+    ctx.fillStyle = hexA(n.id === state.selected ? '#eaf2ff' : '#b8c6e0', a * 0.85);
+    ctx.fillText(label, p.x, p.y + r * 2.4);
+  }
+  return { id: n.id, x: p.x, y: p.y, r: Math.max(9, r * 2) };
+}
+
+function drawPulses(dt) {
+  for (let i = state.pulses.length - 1; i >= 0; i--) {
+    const pu = state.pulses[i];
+    pu.t += dt * 0.001 * pu.speed;
+    const target = state.nodes.get(pu.to);
+    if (!target) { state.pulses.splice(i, 1); continue; }
+    const c = ctrlPoint(pu.from, target.pos);
+    const wpos = qPoint(pu.from, c, target.pos, Math.min(1, pu.t));
+    const p = project(wpos);
+    const r = Math.max(1, (2.0 + pu.size) * (p.s / 6));
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 2.2);
+    g.addColorStop(0, hexA('#ffffff', 0.55));
+    g.addColorStop(0.45, hexA(pu.color, 0.5));
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * 2.2, 0, Math.PI * 2); ctx.fill();
+    if (pu.t >= 1) {
+      target.flash = Math.max(target.flash, 0.5); target.flashColor = pu.color;
+      state.pulses.splice(i, 1);
+    }
+  }
+  for (let i = state.sparks.length - 1; i >= 0; i--) {
+    const s = state.sparks[i];
+    s.life -= dt * 0.0016;
+    if (s.life <= 0) { state.sparks.splice(i, 1); continue; }
+    s.p.x += s.v.x * dt * 0.001; s.p.y += s.v.y * dt * 0.001; s.p.z += s.v.z * dt * 0.001;
+    const p = project(s.p);
+    ctx.fillStyle = hexA(s.color, s.life * 0.55);
+    ctx.fillRect(p.x, p.y, 1.5, 1.5);
+  }
+}
+
+function drawWaves(dt) {
+  for (let i = state.waves.length - 1; i >= 0; i--) {
+    const w = state.waves[i];
+    w.r += dt * 0.16;
+    w.alpha -= dt * 0.0012;
+    if (w.r >= w.max || w.alpha <= 0) { state.waves.splice(i, 1); continue; }
+    const p = w.node && state.nodes.get(w.node)
+      ? project(state.nodes.get(w.node).pos)
+      : { x: W / 2, y: H / 2, s: 6 };
+    ctx.strokeStyle = hexA(w.color, w.alpha);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, w.r * (w.node ? p.s / 6 : 1), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+let lastT = performance.now();
+function frame(t) {
+  const dt = Math.min(64, t - lastT); lastT = t;
+  if (cam.auto) cam.yaw += 0.00022 * dt;
+  if (layoutDirty) computeLevels();
+  for (const id of state.order) {
+    const n = state.nodes.get(id);
+    n.pos.x = lerp(n.pos.x, n.target.x, 0.045);
+    n.pos.y = lerp(n.pos.y, n.target.y, 0.045);
+    n.pos.z = lerp(n.pos.z, n.target.z, 0.045);
+  }
+  drawBackground();
+  drawEdges();
+  hitboxes = [];
+  for (const id of state.order) hitboxes.push(drawNode(state.nodes.get(id), t));
+  if (!state.paused) { drawPulses(dt); drawWaves(dt); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* =========================================================================
+   UI
+   ========================================================================= */
+const feedEl = $('feed');
+function renderFeedEntry(e) {
+  const div = document.createElement('div');
+  div.className = 'ev';
+  div.innerHTML = '<span class="t">' + esc(e.ts) + '</span>' +
+    '<span class="chip" style="background:' + hexA(e.color, 0.18) + ';color:' + e.color + '">' + esc(e.kind) + '</span>' +
+    '<span class="x" title="' + esc(e.text) + '">' + esc((e.nodeId ? e.nodeId + ' ' : '') + (e.text || '')) + '</span>';
+  feedEl.appendChild(div);
+  while (feedEl.children.length > 160) feedEl.removeChild(feedEl.firstChild);
+  feedEl.scrollTop = feedEl.scrollHeight;
+}
+
+setInterval(() => {
+  const now = performance.now();
+  state.eventTimes = state.eventTimes.filter((x) => now - x < 60000);
+  $('ratebadge').textContent = state.eventTimes.length + ' ev/min';
+  $('graphbadge').textContent = 'graph: ' + state.graphId;
+  $('goalline').textContent = 'goal: ' + state.goal;
+  $('phasechip').textContent = 'phase: ' + state.phase;
+  const counts = { pending: 0, running: 0, done: 0, error: 0, skipped: 0 };
+  for (const n of state.nodes.values()) counts[n.status] = (counts[n.status] || 0) + 1;
+  $('c-total').textContent = state.nodes.size;
+  $('c-running').textContent = counts.running || 0;
+  $('c-done').textContent = counts.done || 0;
+  $('c-error').textContent = counts.error || 0;
+  $('c-pending').textContent = counts.pending || 0;
+  $('c-verdicts').textContent = state.verdictsPass + '/' + state.verdictsFail;
+  $('c-esc').textContent = state.escalations;
+  $('c-pulses').textContent = state.pulses.length;
+  if (state.source.mode === 'live') {
+    const fresh = now - state.source.lastDataAt < 4000;
+    $('srcbadge').className = 'badge ' + (fresh ? 'live' : 'wait');
+    if (!fresh && !/WAIT/.test($('srctext').textContent)) {
+      $('srctext').textContent = state.source.label.replace(/^LIVE/, 'WAIT');
+    }
+  }
+}, 700);
+
+/* neuron inspector */
+canvas.addEventListener('click', (e) => {
+  if (moved > 6) return;
+  let best = null, bestD = 1e9;
+  for (const hb of hitboxes) {
+    const d = Math.hypot(e.clientX - hb.x, e.clientY - hb.y);
+    if (d < Math.max(12, hb.r) && d < bestD) { bestD = d; best = hb; }
+  }
+  state.selected = best ? best.id : null;
+  renderDetail();
+});
+$('d-close').addEventListener('click', () => { state.selected = null; renderDetail(); });
+function renderDetail() {
+  const card = $('detail');
+  const n = state.selected ? state.nodes.get(state.selected) : null;
+  if (!n) { card.classList.remove('open'); return; }
+  card.classList.add('open');
+  $('d-title').textContent = n.id;
+  $('d-title').style.color = kindOf(n.kind).c;
+  const rows = [
+    ['label', n.label], ['kind', n.kind],
+    ['status', (STATUS_EMOJI[n.status] || '') + ' ' + n.status],
+    ['deps', n.deps.join(', ') || '\u2014'], ['scope', n.scope || '\u2014'],
+    ['verdict', n.verdict ? n.verdict + (n.weakness != null ? ' \u00b7 w=' + n.weakness.toFixed(2) : '') : '\u2014'],
+    ['model', n.model || '\u2014'], ['duration', fmtDur(n.durationMs) || '\u2014'],
+    ['layer/branch', n.level + ' / ' + n.branch],
+  ];
+  $('d-table').innerHTML = rows.map((r) => '<tr><td class="k">' + esc(r[0]) + '</td><td class="v">' + esc(r[1]) + '</td></tr>').join('');
+  $('devents').innerHTML = n.events.length
+    ? '<b style="color:var(--ink-dim)">LAST EVENTS</b>' + n.events.slice(-8).map((ev) => '<div>' + esc(ev.ts + ' ' + ev.kind + ' \u00b7 ' + ev.text) + '</div>').join('')
+    : '';
+}
+
+/* buttons + keys */
+function toggleDemo() {
+  if (sources.demo || state.demoWanted) { stopDemo(); setSource('off', 'NO SOURCE'); }
+  else startDemo();
+}
+$('b-demo').addEventListener('click', toggleDemo);
+$('b-open').addEventListener('click', openLogs);
+$('b-folder').addEventListener('click', connectFolder);
+$('hero-folder').addEventListener('click', connectFolder);
+$('hero-open').addEventListener('click', openLogs);
+$('hero-demo').addEventListener('click', toggleDemo);
+$('b-http').addEventListener('click', startHttpTail);
+$('b-sse').addEventListener('click', startSSE);
+$('b-pause').addEventListener('click', togglePause);
+$('b-reset').addEventListener('click', resetView);
+$('b-help').addEventListener('click', () => $('help').classList.add('open'));
+$('b-help-close').addEventListener('click', () => $('help').classList.remove('open'));
+$('help').addEventListener('click', (e) => { if (e.target === $('help')) $('help').classList.remove('open'); });
+function togglePause() {
+  state.paused = !state.paused;
+  $('b-pause').textContent = state.paused ? '\u25b6 resume' : '\u23f8 pause';
+  $('b-pause').classList.toggle('on', state.paused);
+}
+window.addEventListener('keydown', (e) => {
+  if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
+  switch (e.key.toLowerCase()) {
+    case ' ': togglePause(); e.preventDefault(); break;
+    case 'r': resetView(); break;
+    case 'f': state.showLabels = !state.showLabels; break;
+    case 'h': $('help').classList.toggle('open'); break;
+    case 'd': toggleDemo(); break;
+    case 'escape': state.selected = null; renderDetail(); $('help').classList.remove('open'); break;
+    default: break;
+  }
+});
+
+/* boot: NO fake demo — connect to the real kraken, or say honestly there is none */
+async function boot() {
+  if (await restoreFolder()) return;               // remembered .zelari folder (file:// or http)
+  if (/^https?:$/.test(location.protocol)) {       // served from the repo root → zero-click live tail
+    await startHttpTail();
+    return;
+  }
+  setSource('off', 'NO SOURCE \u00b7 connect .zelari or open a log');
+  feedRadioStyle(fmtClock(new Date()), 'help', '\u2014',
+    'no source yet \u2014 press \ud83d\udd0c .zelari to tail live runs, \ud83d\udcc2 open a single log, or H for help', '#dca03c');
+}
+boot();
+</script>
+</body>
+</html>
