@@ -64,6 +64,7 @@ import { listSessionTodos } from '../sessionTodos.js';
 import { buildOnePager } from '../memory/onePager.js';
 import { recordCompactionMetrics } from '../metrics.js';
 import { flushMessageUsage, recordMessageUsage } from '../budget/messageUsage.js';
+import { withRequestComposition, type RequestComposition } from '../budget/requestComposition.js';
 import { openHeadlessSpine, seedHeadlessModelHistory, sessionStartedEvent } from '../headlessSpine.js';
 // HarnessState inc.3: shared final-NDJSON read-model emitter (ADR-0023 lens)
 // for this host + council/mission/kraken-graph (H1 inc.2 → inc.3).
@@ -642,6 +643,12 @@ export async function runOneTurn(
     messages: AgentMessage[],
     passSessionId: string,
   ): Promise<SinglePassResult> {
+    // Request make-up per LLM call, attached to that call's usage row below.
+    // Lead only: tentacles get their own stream from the task tool.
+    let lastComposition: RequestComposition | undefined;
+    const meteredStream = withRequestComposition(providerStream, (c) => {
+      lastComposition = c;
+    });
     const harness = new AgentHarness({
       model,
       provider,
@@ -650,7 +657,7 @@ export async function runOneTurn(
       tools,
       toolRegistry,
       cwd,
-      providerStream,
+      providerStream: meteredStream,
       buildLiveness: { mutationRequired: wantWrites, maxRecoveries: 2 },
       requestTail: () =>
         assembleRequestTail(spine.spine.latestResourceSnapshot(), onePager, {
@@ -719,6 +726,7 @@ export async function runOneTurn(
             promptTokens: event.usage.promptTokens,
             completionTokens: event.usage.completionTokens,
             cachedPromptTokens: event.usage.cachedPromptTokens ?? 0,
+            ...(lastComposition ? { composition: lastComposition } : {}),
           });
         }
         if (event.type === 'message_start') {

@@ -24,6 +24,7 @@
 
 import { getMetricsLogger } from '../metrics.js';
 import { calculateCost } from '../modelPricing.js';
+import type { RequestComposition } from './requestComposition.js';
 
 /**
  * One provider-verified LLM call, as persisted in `metrics.jsonl`.
@@ -46,6 +47,8 @@ export interface MessageUsageRecord {
   cachedPromptTokens: number;
   /** Cache-aware USD cost (see modelPricing.calculateCost). */
   costUsd: number;
+  /** What the request was made of, by source (chars) — see requestComposition.ts. */
+  composition?: RequestComposition;
 }
 
 export interface MessageUsageInput {
@@ -56,6 +59,8 @@ export interface MessageUsageInput {
   completionTokens?: number;
   /** Reported cache hits; clamped to `promptTokens` before persisting. */
   cachedPromptTokens?: number;
+  /** Measured request that produced this usage, when the host metered it. */
+  composition?: RequestComposition;
   /** Epoch ms override (tests). Defaults to now. */
   ts?: number;
 }
@@ -89,6 +94,7 @@ export function recordMessageUsage(input: MessageUsageInput): void {
       completionTokens,
       cachedPromptTokens,
       costUsd: calculateCost(model, promptTokens, completionTokens, cachedPromptTokens),
+      ...(input.composition ? { composition: input.composition } : {}),
     };
     // Bound to a typed local (not an inline literal) on purpose: the persisted
     // row stays pinned to `MessageUsageRecord` — the subset of `MetricsRecord`

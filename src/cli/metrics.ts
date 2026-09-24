@@ -65,6 +65,12 @@ export interface MetricsRecord {
    * "prompt cache" section reports (M1.2).
    */
   cachedPromptTokens?: number;
+  /**
+   * Request make-up by source in chars (`kind: 'message'`): system, tool
+   * schemas (MCP split out), trailing context, user, assistant, tool results.
+   * See src/cli/budget/requestComposition.ts.
+   */
+  composition?: import('./budget/requestComposition.js').RequestComposition;
 
     /** Fase M: context-growth per-run counters (attached to `kind: 'run'`). */
     toolRoundTrips?: number;

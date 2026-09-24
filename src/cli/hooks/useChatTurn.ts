@@ -7,6 +7,7 @@ import type { AgentMessage } from "@zelari/core/harness";
 import { ingestLiveEvent } from "./observationStore.js";
 import { MetricsLogger, getMetricsLogger, recordCompactionMetrics } from "../metrics.js";
 import { recordMessageUsage } from "../budget/messageUsage.js";
+import { withRequestComposition, type RequestComposition } from "../budget/requestComposition.js";
 import type { BrainContextMetricsEvent } from "@zelari/core/events";
 import { calculateCost } from "../modelPricing.js";
 import {
@@ -916,6 +917,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           default: 0, // 0 → harness default (soft×3, min soft+60)
           min: 0,
         });
+        // Request make-up per LLM call, attached to that call's usage row.
+        let lastComposition: RequestComposition | undefined;
+        const meteredStream = withRequestComposition(providerStream, (c) => {
+          lastComposition = c;
+        });
         const harness = new AgentHarness({
           model: envConfig.model,
           // v1.36.0 (P0.2): real provider identity — the harness used to
@@ -942,7 +948,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             parameters: t.function.parameters,
           })),
           toolRegistry,
-          providerStream,
+          providerStream: meteredStream,
           buildLiveness: {
             mutationRequired: expectsDiskImplementation(
               userText,
@@ -1189,6 +1195,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   promptTokens: event.usage.promptTokens,
                   completionTokens: event.usage.completionTokens,
                   cachedPromptTokens: event.usage.cachedPromptTokens ?? 0,
+                  ...(lastComposition ? { composition: lastComposition } : {}),
                 });
               }
               // Message boundary: seal with a full scrub so the last tokens
