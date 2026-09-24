@@ -37,6 +37,7 @@ import { createToolHeartbeat, toolHeartbeatCaption } from './toolHeartbeat.js';
 import { ToolRegistry } from './tools/registry.js';
 import { classifyToolConcurrency } from './tools/concurrency.js';
 import { metaFooter } from './tools/toolTypes.js';
+import { renderToolResultForModel } from './tools/toolResultRender.js';
 // v2.16 (t24): same failure-mode vocabulary as the lifecycle hooks (t22).
 import type { HookFailureMode } from './hooks/lifecycleHookRunner.js';
 import {
@@ -1577,7 +1578,13 @@ export class AgentHarness {
       // BEFORE the assistant message → strict providers reject the next request
       // (MiniMax: "tool result's tool id ... not found (2013)"). xAI/grok
       // tolerated the reversed order; MiniMax/GLM do not.
-      const turnToolResults: { toolCallId: string; content: string; images?: AgentImage[] }[] = [];
+      const turnToolResults: {
+        toolCallId: string;
+        content: string;
+        images?: AgentImage[];
+        /** For the model-facing render (per-tool cap exemptions). */
+        toolName?: string;
+      }[] = [];
       // v1.8.0: queue native tool_call deltas; execute on `finish` so
       // consecutive read-only tools (and multi-`task` explore/verify) run in parallel.
       type PendingNativeTool = {
@@ -1734,13 +1741,16 @@ export class AgentHarness {
               pendingNativeTools,
               maxToolCalls,
             );
+            const pendingName = new Map(pendingNativeTools.map((p) => [p.toolCallId, p.toolName]));
             for (const item of executed) {
               this.emit(item.endEvent);
               yield item.endEvent;
+              const toolName = pendingName.get(item.toolCallId);
               turnToolResults.push({
                 toolCallId: item.toolCallId,
                 content: item.content,
                 ...(item.images ? { images: item.images } : {}),
+                ...(toolName ? { toolName } : {}),
               });
               if (item.cacheKey && item.content && !item.isError) {
                 this.toolCallCache.set(item.cacheKey, item.content);
@@ -1926,7 +1936,7 @@ export class AgentHarness {
               });
               this.emit(endEv);
               yield endEv;
-              turnToolResults.push({ toolCallId, content: resultStr });
+              turnToolResults.push({ toolCallId, content: resultStr, toolName: tt.name });
               if (!isError) this.recordSuccessfulTool(tt.name, tt.args);
               executedAny = true;
             }
@@ -2062,10 +2072,17 @@ export class AgentHarness {
             }
           }
           for (const tr of turnToolResults) {
+            // Model-facing copy only (compact, ANSI-free, capped with a
+            // spill path): events and the spine keep the JSON string the
+            // evidence parsers read. See tools/toolResultRender.ts.
+            const modelContent = renderToolResultForModel(
+              tr.content,
+              tr.toolName ? { toolName: tr.toolName } : {},
+            );
             const idx = placeholderMap.get(tr.toolCallId);
             if (idx !== undefined && this.config.messages[idx]) {
               // Replace placeholder with actual result.
-              (this.config.messages[idx] as { content: string }).content = tr.content;
+              (this.config.messages[idx] as { content: string }).content = modelContent;
               if (tr.images) {
                 (this.config.messages[idx] as { images?: AgentImage[] }).images = tr.images;
               }
@@ -2073,7 +2090,7 @@ export class AgentHarness {
               this.config.messages.push({
                 role: 'tool',
                 toolCallId: tr.toolCallId,
-                content: tr.content,
+                content: modelContent,
                 ...(tr.images ? { images: tr.images } : {}),
               });
             }
