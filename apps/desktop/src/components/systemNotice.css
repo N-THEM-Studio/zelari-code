@@ -1,0 +1,214 @@
+/*
+ * System notices in the chat (SystemNotice.tsx). Tone tokens come from the
+ * theme (--danger / --warning / --success / --accent), so dark and light
+ * follow automatically.
+ */
+
+.notice {
+  --notice-tone: var(--accent);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  color: var(--text);
+  animation: fadeIn 0.18s ease;
+}
+
+.notice-error {
+  --notice-tone: var(--danger);
+}
+.notice-warning {
+  --notice-tone: var(--warning);
+}
+.notice-success {
+  --notice-tone: var(--success);
+}
+.notice-info {
+  --notice-tone: var(--accent);
+}
+
+.notice-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--notice-tone);
+}
+
+.notice-icon-svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- Card: errors, warnings, anything the user should act on ---- */
+
+.notice-card {
+  position: relative;
+  padding: 11px 40px 11px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--notice-tone) 26%, var(--border-subtle));
+  border-left: 3px solid var(--notice-tone);
+  background: color-mix(in srgb, var(--notice-tone) 7%, var(--surface));
+}
+
+.notice-card .notice-icon {
+  margin-top: 1px;
+}
+
+.notice-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.notice-card .notice-title {
+  font-size: 13.5px;
+  font-weight: 620;
+  line-height: 1.35;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.notice-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.notice-hint {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--notice-tone) 70%, var(--text));
+}
+
+.notice-details {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.notice-details > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  width: fit-content;
+  user-select: none;
+}
+
+.notice-details > summary:hover {
+  color: var(--text-secondary);
+}
+
+.notice-details pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--code-bg);
+  color: var(--code-text);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.notice-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.notice-card:hover .notice-copy,
+.notice-card:focus-within .notice-copy {
+  opacity: 1;
+}
+
+/* ---- Compact: progress notes and confirmations, one quiet line ---- */
+
+.notice-compact {
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.notice-compact-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+.notice-compact .notice-title {
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.notice-compact-body {
+  color: var(--text-muted);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.notice-compact .notice-icon-svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---- Permission ask: one row of actions with a clear hierarchy ---- */
+
+.permission-card {
+  border-left: 3px solid var(--warning);
+}
+
+.permission-card .clarification-kicker {
+  color: var(--warning);
+}
+
+.permission-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.permission-actions .clarification-choice {
+  flex: 0 1 auto;
+  text-align: center;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.permission-actions .clarification-choice.is-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2, var(--accent)));
+  border-color: transparent;
+  color: var(--on-accent);
+  font-weight: 620;
+}
+
+.permission-actions .clarification-choice.is-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2, var(--accent)));
+}
+
+.permission-actions .clarification-choice.is-secondary {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.permission-actions .clarification-choice.is-deny {
+  margin-left: auto;
+  color: var(--danger);
+  background: transparent;
+}
+
+/* A settled permission is a small chip, not a full-width bar. */
+.message .permission-chip {
+  align-self: flex-start;
+}

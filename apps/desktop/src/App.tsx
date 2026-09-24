@@ -2559,10 +2559,15 @@ export default function App() {
                       {
                         id: uid("sys"),
                         role: "system",
-                        content:
-                          code === "assistant_text_loop"
-                            ? `${msg}\n\n→ Click “Continue with tools” below, or send a short tool-only request (list_files → one write_file).`
-                            : msg,
+                        // SystemNotice words assistant_text_loop's next step
+                        // itself (keyed on `notice.code`).
+                        content: msg,
+                        notice: {
+                          ...(code ? { code } : {}),
+                          ...(typeof (ev as { severity?: unknown }).severity === "string"
+                            ? { severity: (ev as { severity?: unknown }).severity as string }
+                            : {}),
+                        },
                         createdAt: Date.now(),
                       },
                     ],

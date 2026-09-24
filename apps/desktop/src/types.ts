@@ -48,6 +48,9 @@ export interface ChatMessage {
   /** Local image paths the agent produced (screenshot / browser capture):
    * rendered inline by ChatImageCard instead of a text reply. */
   imagePaths?: string[];
+  /** System line metadata from the runtime error event (code / severity):
+   * lets SystemNotice pick tone and wording without guessing from text. */
+  notice?: import("./systemNotice").NoticeMeta;
 }
 
 export interface MessageStats {

@@ -25,6 +25,8 @@ import { ReplyAccordion } from "./ReplyAccordion";
 import { ChatImageCard } from "./ChatImageCard";
 import { PermissionCard } from "./PermissionCard";
 import { ClarificationCard } from "./ClarificationCard";
+import { SystemNotice } from "./SystemNotice";
+import { describeAskUserOutcome, describeSystemMessage } from "../systemNotice";
 
 /** Permission decisions the card can emit (pending/timeout are not choices). */
 export type PermissionDecision = Exclude<
@@ -232,14 +234,17 @@ function ChatListBase({
                     }
                   />
                 ) : (
-                  <div className="bubble system-bubble">
-                    {m.askUserAsk.status === "timeout"
-                      ? "No answer — continuing with a documented assumption."
-                      : `Answered: ${m.askUserAsk.answer ?? ""}`}
-                  </div>
+                  <SystemNotice
+                    notice={describeAskUserOutcome(
+                      m.askUserAsk.question,
+                      m.askUserAsk.answer,
+                      m.askUserAsk.status === "timeout",
+                    )}
+                    raw={m.askUserAsk.answer ?? m.askUserAsk.question}
+                  />
                 )
               ) : (
-                <div className="bubble system-bubble">{m.content}</div>
+                <SystemNotice notice={describeSystemMessage(m.content, m.notice)} raw={m.content} />
               )}
             </div>
           ),

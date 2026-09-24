@@ -8,6 +8,7 @@
  * and history does not need a card worth of space on every scroll.
  */
 import type { PermissionAskState, PermissionAskStatus } from "../inChatAsk";
+import "./systemNotice.css";
 
 interface Props {
   ask: PermissionAskState;
@@ -98,10 +99,10 @@ export function PermissionCard({ ask, disabled, onDecide }: Props) {
           <pre className="permission-preview">{preview}</pre>
         </details>
       ) : null}
-      <div className="clarification-choices">
+      <div className="clarification-choices permission-actions">
         <button
           type="button"
-          className="clarification-choice"
+          className="clarification-choice is-primary"
           disabled={disabled}
           onClick={() => onDecide("allow")}
         >
@@ -109,7 +110,7 @@ export function PermissionCard({ ask, disabled, onDecide }: Props) {
         </button>
         <button
           type="button"
-          className="clarification-choice"
+          className="clarification-choice is-secondary"
           disabled={disabled}
           onClick={() => onDecide("always-tool")}
         >
@@ -118,7 +119,7 @@ export function PermissionCard({ ask, disabled, onDecide }: Props) {
         {ask.categories.length > 0 ? (
           <button
             type="button"
-            className="clarification-choice"
+            className="clarification-choice is-secondary"
             disabled={disabled}
             onClick={() => onDecide("always-category")}
           >
