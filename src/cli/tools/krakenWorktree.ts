@@ -25,6 +25,14 @@
  *   5. Whenever a worktree cannot be created (not a git repo, no git, add failed)
  *      the tentacle runs in the SHARED parent tree and the reason is reported —
  *      never a silent degradation, never a failed tentacle.
+ *   6. Dirty parent (post-mortem 2026-09-24, `kraken/worktreeSeed.ts`): when the
+ *      parent tree has uncommitted work, step 1 starts from a SNAPSHOT commit of
+ *      that working tree instead of HEAD (the writer sees what the lead sees),
+ *      and step 3 applies the tentacle's own edits back with `git apply` — no
+ *      squash commit, no reset of the user's uncommitted files. A dirty tree
+ *      that cannot be snapshotted declines isolation (shared tree, reported)
+ *      rather than hand the writer a stale HEAD. `ZELARI_KRAKEN_WORKTREE_SEED=head`
+ *      restores the HEAD start point.
  *
  * WS3 hardening (win32):
  *
@@ -86,6 +94,12 @@ import {
   formatRollbackMessage,
   rollbackParentAfterFailedMerge,
 } from '../kraken/worktreeMergeRollback.js';
+import {
+  applySeededWorktree,
+  resolveWorktreeSeedMode,
+  seedRecoveryCommand,
+  snapshotDirtyParent,
+} from '../kraken/worktreeSeed.js';
 
 /**
  * Cleanup policy + queue live in `kraken/worktreeCleanupBatch.ts` (Int3c):
@@ -105,8 +119,14 @@ export interface WorktreeHandle {
   branch: string;
   path: string;
   repoRoot: string;
-  /** HEAD sha at creation (merge base). */
+  /** Merge base: HEAD at creation, or the seed snapshot when `seedSha` is set. */
   baseSha?: string;
+  /**
+   * Snapshot commit of the parent's uncommitted working tree the worktree was
+   * started from (dirty parent). Present ⇒ merge-back applies `seedSha..branch`
+   * as a patch to the parent working tree instead of squash-committing.
+   */
+  seedSha?: string;
 }
 
 export interface WorktreeMergeResult {
@@ -127,6 +147,7 @@ export type KrakenWorktreeFailureCode =
   | 'not-a-git-repo'
   | 'worktree-root-unwritable'
   | 'worktree-add-failed'
+  | 'worktree-seed-failed'
   | 'worktree-create-threw';
 
 /** Outcome of an isolation attempt: a handle, or the reason there is none. */
@@ -409,7 +430,7 @@ interface GitResult {
 async function git(
   cwd: string,
   args: string[],
-  opts: { longPaths?: boolean } = {},
+  opts: { longPaths?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): Promise<GitResult> {
   const prefix =
     opts.longPaths && process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : [];
@@ -417,6 +438,7 @@ async function git(
     const { stdout, stderr } = await execFileAsync('git', [...prefix, '-C', cwd, ...args], {
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true,
+      ...(opts.env ? { env: opts.env } : {}),
     });
     return { ok: true, stdout: stdout ?? '', stderr: stderr ?? '', code: 0 };
   } catch (err: unknown) {
@@ -480,6 +502,7 @@ export async function resolveGitRoot(cwd: string): Promise<string | null> {
 export async function createKrakenWorktreeDetailed(
   cwd: string,
   label?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<KrakenWorktreeCreateResult> {
   const probe = await resolveGitRootDetailed(cwd);
   if (!probe.root) {
@@ -496,7 +519,25 @@ export async function createKrakenWorktreeDetailed(
   const repoRoot = probe.root;
 
   const head = await git(repoRoot, ['rev-parse', 'HEAD']);
-  const baseSha = head.ok ? head.stdout.trim() : undefined;
+  const headSha = head.ok ? head.stdout.trim() : undefined;
+
+  // Dirty parent: start from a snapshot of the working tree, not from HEAD.
+  // A dirty tree we cannot capture declines isolation — a writer on a stale
+  // HEAD tree edits files the lead no longer has (the 2026-09-24 loop).
+  let seedSha: string | undefined;
+  if (headSha && resolveWorktreeSeedMode(env) === 'dirty') {
+    const snap = await snapshotDirtyParent(git, repoRoot, headSha);
+    if (snap.kind === 'failed') {
+      return {
+        ok: false,
+        code: 'worktree-seed-failed',
+        reason: `uncommitted parent changes could not be snapshotted (${snap.reason})`,
+      };
+    }
+    if (snap.kind === 'seeded') seedSha = snap.sha;
+  }
+  const startPoint = seedSha ?? 'HEAD';
+  const baseSha = seedSha ?? headSha;
 
   const id = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
   const slug =
@@ -522,13 +563,13 @@ export async function createKrakenWorktreeDetailed(
     };
   }
 
-  const add = await git(repoRoot, ['worktree', 'add', '-b', branch, wtPath, 'HEAD'], { longPaths });
+  const add = await git(repoRoot, ['worktree', 'add', '-b', branch, wtPath, startPoint], { longPaths });
   if (!add.ok) {
     // Detached retry: an existing `kraken/<slug>-<id>` name (or a git that
     // refuses `-b` on this object format) still gets isolation, just without
     // a mergeable branch name — the handle says `HEAD`, and cleanup knows not
     // to delete a branch in that case.
-    const add2 = await git(repoRoot, ['worktree', 'add', wtPath, 'HEAD'], { longPaths });
+    const add2 = await git(repoRoot, ['worktree', 'add', wtPath, startPoint], { longPaths });
     if (!add2.ok) {
       return {
         ok: false,
@@ -536,10 +577,16 @@ export async function createKrakenWorktreeDetailed(
         reason: `git worktree add failed: ${(add2.stderr || add.stderr).trim().slice(0, 300)}`,
       };
     }
-    return { ok: true, handle: { id, branch: 'HEAD', path: wtPath, repoRoot, baseSha } };
+    return {
+      ok: true,
+      handle: { id, branch: 'HEAD', path: wtPath, repoRoot, baseSha, ...(seedSha ? { seedSha } : {}) },
+    };
   }
 
-  return { ok: true, handle: { id, branch, path: wtPath, repoRoot, baseSha } };
+  return {
+    ok: true,
+    handle: { id, branch, path: wtPath, repoRoot, baseSha, ...(seedSha ? { seedSha } : {}) },
+  };
 }
 
 /**
@@ -650,6 +697,10 @@ async function mergeKrakenWorktreeExclusive(
     };
   }
 
+  if (handle.seedSha) {
+    return applySeededMerge({ ...handle, seedSha: handle.seedSha }, opts, env, pre.committed, abortBase);
+  }
+
   const range = handle.baseSha
     ? `${handle.baseSha}..${handle.branch}`
     : handle.branch;
@@ -723,6 +774,62 @@ async function mergeKrakenWorktreeExclusive(
     message: committed
       ? `squash-merged ${handle.branch} into HEAD`
       : `squash-merge ${handle.branch} (no parent commit — already applied?)`,
+  };
+}
+
+/**
+ * Merge-back for a worktree seeded from a dirty parent: the tentacle's own
+ * edits (`seedSha..branch`) are applied to the parent WORKING TREE. Nothing
+ * is committed on the user's branch (it holds uncommitted work of its own)
+ * and nothing is rolled back — `git apply` is atomic, so a rejected patch
+ * leaves the parent untouched and the work on the kept branch.
+ */
+async function applySeededMerge(
+  handle: WorktreeHandle & { seedSha: string },
+  opts: { cleanup?: boolean },
+  env: NodeJS.ProcessEnv,
+  committedInWorktree: boolean,
+  abortBase: { repoRoot: string; branch: string; nodeId: string; sessionId?: string },
+): Promise<WorktreeMergeResult> {
+  const cleanup = async () => {
+    if (opts.cleanup !== false && !shouldKeepWorktree(env)) {
+      await cleanupKrakenWorktree(handle, env);
+    }
+  };
+  const applied = await applySeededWorktree(git, handle.repoRoot, handle.seedSha, handle.branch);
+  if (applied.kind === 'empty') {
+    await cleanup();
+    return {
+      ok: true,
+      merged: false,
+      committed: false,
+      message: committedInWorktree
+        ? 'no net changes to apply (worktree edits cancel out)'
+        : 'no changes to merge (worktree empty)',
+    };
+  }
+  if (applied.kind === 'applied') {
+    await cleanup();
+    return {
+      ok: true,
+      merged: true,
+      committed: false,
+      message:
+        `applied ${applied.files} file(s) to the working tree — not committed, ` +
+        'the parent tree has uncommitted work of its own',
+    };
+  }
+  // rejected / failed: the parent is exactly as before (atomic apply).
+  const why = applied.kind === 'rejected' ? `patch does not apply: ${applied.reason}` : applied.reason;
+  emitWorktreeMergeAborted({ ...abortBase, reason: why, phase: 'squash' });
+  return {
+    ok: false,
+    merged: false,
+    committed: false,
+    conflict: applied.kind === 'rejected',
+    message:
+      `${why}. Parent tree left untouched; the work is on branch ${handle.branch} ` +
+      `(${handle.path}). Recover it with: ${seedRecoveryCommand(handle.seedSha, handle.branch)}`,
   };
 }
 
