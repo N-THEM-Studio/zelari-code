@@ -182,6 +182,24 @@ export interface SubAgentHarness {
  */
 export const TASK_TOOL_TIMEOUT_MS = 2_700_000;
 
+/** Time kept free at the end of the `task` budget so the tool returns before the registry kill. */
+export const AUTO_VERIFY_RESERVE_MS = 60_000;
+/** Below this window a verify/rework chain cannot do useful work — skip it honestly. */
+export const AUTO_VERIFY_MIN_WINDOW_MS = 120_000;
+
+/**
+ * Post-mortem 2026-09-24: the registry enforces TASK_TOOL_TIMEOUT_MS as a
+ * hard race and DISCARDS the result when it fires — a general that finished
+ * after 26 minutes lost its whole report (and the parent concluded "nothing
+ * was written") because its verify+rework chain was still running at 45.
+ * The chain therefore gets only the time that is left, minus a reserve;
+ * 0 means "not enough time left to verify at all".
+ */
+export function autoVerifyBudgetMs(startedAt: number, now: number = Date.now()): number {
+  const left = TASK_TOOL_TIMEOUT_MS - (now - startedAt) - AUTO_VERIFY_RESERVE_MS;
+  return left >= AUTO_VERIFY_MIN_WINDOW_MS ? left : 0;
+}
+
 /**
  * Runtime permission tags for ONE `task` invocation, from the agent kind.
  * The tool schema still advertises the union (read/network/write/execute)
@@ -1141,6 +1159,28 @@ export const TURN_BUDGETS: Readonly<
 };
 
 /**
+ * Tentacle loop ceiling: the harness HARD cap for a sub-agent, as a multiple
+ * of its soft loop cap (default 2x).
+ *
+ * Post-mortem 2026-09-24: without an explicit value the harness default
+ * (`max(soft*3, soft+60)`) let a deep general with a nominal budget of 20
+ * tool calls run 83 turns and 5.7M prompt tokens — each turn re-sends the
+ * whole growing context, so cost grows with the square of the turns. Over the
+ * week before, the 3 tentacles past 2x their soft cap were 82% of ALL tentacle
+ * prompt tokens. At the cap the harness forces a closing no-tools answer, so
+ * the parent still gets a report. `ZELARI_KRAKEN_TENTACLE_LOOP_FACTOR`
+ * (1-5, default 2) tunes the multiple.
+ */
+export function tentacleLoopHardCap(
+  softCap: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = Number.parseFloat(env.ZELARI_KRAKEN_TENTACLE_LOOP_FACTOR ?? '');
+  const factor = Number.isFinite(raw) && raw >= 1 && raw <= 5 ? raw : 2;
+  return Math.max(softCap, Math.round(softCap * factor));
+}
+
+/**
  * The ONE budget lookup: kind x thoroughness -> nominal tool budget.
  * A thoroughness outside the enum (it can arrive through an unchecked cast)
  * falls back to the kind's medium baseline, like the pre-t158 if-chain did.
@@ -1529,6 +1569,13 @@ export interface TentacleSuccess {
    * when `deferMerge` was requested.
    */
   worktreeHandle: WorktreeHandle | null;
+  /**
+   * Post-mortem 2026-09-24: set when the tentacle's edits did NOT reach the
+   * parent tree — its worktree merge-back failed and the work sits only on the
+   * kept branch. Verifying or reworking that tree cannot help the parent, so
+   * the `task` wrapper skips the auto-verify chain and says where the work is.
+   */
+  workNotApplied?: string;
   /** Cognitive-memory node created from this concise conclusion, if enabled. */
   memoryId?: string;
   /**
@@ -2080,6 +2127,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // and the loop cap below is SOFT (the harness auto-extends it), which is why
   // the tool description advertises the budget as partial/best-effort.
   const maxToolCalls = resolveBudget(agent, thoroughness);
+  const softLoopCap = Math.max(12, maxToolCalls + 4);
   const runCwd = runtimeCwd;
   const config: AgentHarnessConfig = {
     model: sub.model,
@@ -2097,7 +2145,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     },
     cwd: runCwd,
     maxToolCallsPerTurn: maxToolCalls,
-    maxToolLoopIterations: Math.max(12, maxToolCalls + 4),
+    maxToolLoopIterations: softLoopCap,
+    maxToolLoopHardCap: tentacleLoopHardCap(softLoopCap),
     ...(deps.memoryService
       ? {
           memoryService: deps.memoryService,
@@ -2411,6 +2460,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
 
   const kept = worktree ? shouldKeepWorktree() : false;
   let footer = '';
+  let workNotApplied: string | undefined;
   if (worktree && opts.deferMerge && !kept) {
     // Graph executor (F3) owns merge ordering — leave the worktree + branch
     // in place; the caller merges (sequentially, across tentacles) and
@@ -2442,6 +2492,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       await teardownWorktree(worktree);
     }
     footer += `\n${formatWorktreeFooter(worktree, { kept, merge })}`;
+    if (merge && !merge.ok) workNotApplied = merge.message;
   }
   if (agent === 'general') {
     g.__zelariLastGeneralAt = Date.now();
@@ -2555,6 +2606,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ...(toolTrace && toolTrace.length > 0 ? { toolTrace } : {}),
     worktreePath: worktree?.path ?? null,
     worktreeHandle: worktree,
+    ...(workNotApplied !== undefined ? { workNotApplied } : {}),
     ...(memoryId ? { memoryId } : {}),
     reportStatus,
   };
@@ -2607,6 +2659,7 @@ export function createTaskTool(
     timeoutMs: TASK_TOOL_TIMEOUT_MS,
     inputSchema,
     execute: async (args, ctx): Promise<TypedResult<{ result: string; agent: string }>> => {
+      const startedAt = Date.now();
       const agent: TaskAgentKind = args.agent ?? 'explore';
       let candidateSlot = 0;
       // Fase 1 (ADR-0020): policy gate BEFORE the spawn budget — a rejected
@@ -2770,7 +2823,40 @@ export function createTaskTool(
       // successful general, the tool itself spawns the verify (same
       // acceptance[], same tree) instead of only appending a hint footer.
       // FAIL gets at most one rework round, mirroring the graph executor.
-      if (res.agent === 'general') {
+      const verifyBudgetMs = res.agent === 'general' ? autoVerifyBudgetMs(startedAt) : 0;
+      if (res.agent === 'general' && res.workNotApplied !== undefined) {
+        // The edits never reached the parent tree: verifying (or reworking)
+        // the kept branch cannot change what the parent has. Say so, keep the
+        // debt open, and hand the parent the recovery path instead.
+        addTaskVerifyObligation(
+          res.agentId ?? args.description,
+          {
+            description: args.description,
+            detail: `edits not applied to the working tree: ${res.workNotApplied}`,
+          },
+          sessionId,
+        );
+        result +=
+          '\n\n[kraken:auto-verify] skipped — this general\'s edits are NOT in the working tree ' +
+          '(worktree merge-back failed, see the worktree line above). Do not assume the change ' +
+          'landed: recover the kept branch, or redo the change directly in the working tree.';
+      } else if (res.agent === 'general' && verifyBudgetMs === 0) {
+        addTaskVerifyObligation(
+          res.agentId ?? args.description,
+          {
+            description: args.description,
+            detail: 'auto-verify skipped: the task time budget is spent',
+          },
+          sessionId,
+        );
+        result +=
+          '\n\n[kraken:auto-verify] skipped — the task time budget is nearly spent. The edits ARE ' +
+          'applied but UNVERIFIED: run a separate verify task.';
+      } else if (res.agent === 'general') {
+        // The chain may only use the time left, so the tool returns (with the
+        // general's report) before the registry's hard timeout discards it.
+        const deadline = AbortSignal.timeout(verifyBudgetMs);
+        const verifySignal = ctx.signal ? AbortSignal.any([ctx.signal, deadline]) : deadline;
         try {
           result += await runAutoVerifyAfterGeneral({
             deps,
@@ -2783,8 +2869,13 @@ export function createTaskTool(
             general: res,
             parentCwd,
             sessionId,
-            ...(ctx.signal ? { signal: ctx.signal } : {}),
+            signal: verifySignal,
           });
+          if (deadline.aborted && !ctx.signal?.aborted) {
+            result +=
+              '\n[kraken:auto-verify] stopped at the task time budget — the edits above ARE applied, ' +
+              'verification is incomplete.';
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           // K1.1: key the debt by the runtime agentId (when present) so it
