@@ -456,7 +456,8 @@ Optional **Tauri 2** shell (`apps/desktop/`): a modern chat that runs `zelari-co
 
 | Control | Values | CLI flag |
 |---|---|---|
-| Mode | Kraken · Council · Zelari | `--mode` (`agent` = alias) |
+| Mode | Kraken · Zelari (Council: CLI only) | `--mode` (`agent` = alias) |
+| Tentacles | delegation + per-role model / thinking (composer pill) | `ZELARI_KRAKEN_*` env per turn |
 | Phase | Plan · Build | `--phase` |
 | Provider / model | bar + Settings | `--provider` / `--model` |
 | Open Folder | working directory | CLI process cwd |
@@ -1755,18 +1756,22 @@ The default **kraken** mode (formerly `agent`) is a lead that spawns sub-agents 
 | `ZELARI_KRAKEN_MAX_TASK_SPAWNS` | Cap of `task` spawns per parent turn (default 6); reset on every user message |
 | `ZELARI_KRAKEN_SUB_MODEL` | Cheap model for explore/verify tentacles. Accepts **qualified** `provider/model` refs (e.g. `glm/glm-4.7-air`) to use a provider other than the lead's |
 | `ZELARI_KRAKEN_EXPLORE_MODEL` / `ZELARI_KRAKEN_VERIFY_MODEL` / `ZELARI_KRAKEN_GENERAL_MODEL` | Per-type overrides; accept **qualified** `provider/model` refs to send that tentacle to a provider other than the lead's |
-| `ZELARI_KRAKEN_DELEGATION` | Lead delegation policy: `automatic` (default, unchanged behavior) · `prefer` (nudges the lead to use `task` tentacles) · `aggressive` · `lead-only` (the lead works alone). In Desktop: Settings → Kraken → Delegation policy |
+| `ZELARI_KRAKEN_DELEGATION` | Lead delegation policy: `automatic` (default, unchanged behavior) · `prefer` (nudges the lead to use `task` tentacles) · `aggressive` · `lead-only` (the lead works alone). In Desktop: the **Tentacles** pill under the chat |
 | `ZELARI_KRAKEN_GENERAL_USES_SUB=1` | Makes general use SUB_MODEL too |
 | `ZELARI_KRAKEN_VERIFY_REASK=0` | Disable the one-shot re-ask that recovers an `unknown` verify verdict: a single no-tools completion on the reviewer's own prior output, parsed with the same verdict parser, at most once per node. Default **on** |
 | `ZELARI_KRAKEN_WORKTREE=0` | **Opt-out** (WS3 / 2.39): isolation is **ON by default**, and `0` (or `false`/`no`/`off`) runs the writer in the parent tree instead |
 | `ZELARI_KRAKEN_WORKTREE=1` | Legacy truthy spelling — same as the default: isolate `task` general in a git worktree under `.zelari/worktrees/` |
 | `ZELARI_KRAKEN_WORKTREE=auto` | Isolation (default) plus per-writer scheduling: overlapping writers with low scope overlap are pulled forward (see below) |
 | `ZELARI_KRAKEN_WORKTREE_KEEP=1` | Don't delete worktree/branch when the tentacle ends (manual merge). Also disables the auto-merge: the worktree stays for you to merge by hand |
+| `ZELARI_KRAKEN_WORKTREE_SEED=head` | Start writers from HEAD even when the parent tree has uncommitted work (previous behaviour). Default: a dirty parent is snapshotted and the writer starts from exactly what you see on disk (see below) |
+| `ZELARI_KRAKEN_TENTACLE_LOOP_FACTOR` | Hard cap of a tentacle's tool loop as a multiple of its soft cap (1–5, default 2; e.g. a deep general stops at 48 turns with a forced closing report) |
 | `ZELARI_KRAKEN_WORKTREE_AUTO_MERGE=0` | Disable the worktree squash-merge into the parent at the end of the tentacle (default on) |
 | `ZELARI_KRAKEN_WORKTREE_CLEANUP=batch` | Worktree cleanup granularity (default `batch`): one `git worktree prune` + one `git branch -D` at the end of a Kraken graph run. `eager` restores per-worktree cleanup |
 | `/kraken [sessionId]` | Show the tentacle radio (`.zelari/radio/<session>.jsonl`) |
 
 **Worktree isolation (`ZELARI_KRAKEN_WORKTREE`) — default ON since 2.39 (WS3).** Every `task` general (and every `general`/`fix` graph node) runs in its own git worktree under `.zelari/worktrees/kraken-*`: the writer edits its private checkout, the parent tree is untouched while it works, and at the end of the tentacle the branch is squash-merged back into the parent HEAD and both the worktree and the branch are removed. **`ZELARI_KRAKEN_WORKTREE=0` is the opt-out** (`false`/`no`/`off` too) and restores execution directly in the parent tree; `1`/`true`/`yes`/`on` mean the same as the default. Anything else — including an empty or misspelled value — stays **ON**: isolation is what protects your working tree, so an unreadable value must never drop it. If the folder is not a git repo, git is missing, or `worktree add` fails, the tentacle still runs (in the parent tree) and the reason is recorded on the tentacle radio as a `worktree.fallback_shared_tree` event — never a silent degradation.
+
+**Uncommitted work in the parent tree.** When your tree has uncommitted changes (staged, unstaged or new files), the writer does not start from HEAD: Zelari snapshots the working tree into a commit object through a temporary index (your index, HEAD and files are not touched) and the worktree starts from that snapshot, so the writer sees exactly what you and the lead see. At the end only the tentacle's own edits come back, applied to your working tree with `git apply` — atomic, **not committed** (your branch holds uncommitted work of its own) and never rolled back over your files. If the patch no longer applies because the same lines changed meanwhile, your tree is left untouched, the work stays on its `kraken/*` branch and the task result prints the recovery command (`git diff <seed> <branch> | git apply --3way`); the `task` tool then skips the auto-verify for that general, because its edits are not in your tree. A dirty tree that cannot be snapshotted runs the writer in the shared tree (reported), never on a stale HEAD checkout.
 
 `auto` keeps its extra scheduling meaning: on top of the default isolation, a writer that would otherwise be **deferred** for overlapping scopes runs immediately in its own worktree when its estimated overlap with the racing writer is low (`< 0.75`), while high overlap stays sequential. Merges stay sequential either way. `auto` is **recommended on medium/large repos**: it turns "second writer waits" into real parallelism exactly where the lead serializes most. Note that the isolation flip did **not** widen parallelism: without `auto`, overlapping writers still defer.
 
