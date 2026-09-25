@@ -69,10 +69,8 @@ function readDefaults(): { mode: DispatchMode; phase: WorkPhase } {
     const raw = localStorage.getItem(LS_DEFAULTS);
     if (!raw) return { mode: "kraken", phase: "build" };
     const j = JSON.parse(raw) as { mode?: string; phase?: string };
-    const mode =
-      j.mode === "council" || j.mode === "zelari" || j.mode === "kraken"
-        ? j.mode
-        : "kraken";
+    // Same normalization as App.loadDefaults: council is no longer a Desktop mode.
+    const mode = j.mode === "zelari" ? "zelari" : "kraken";
     const phase = j.phase === "plan" ? "plan" : "build";
     return { mode, phase };
   } catch {
@@ -544,7 +542,6 @@ export function OverlayApp() {
           onChange={(e) => onModeChange(e.target.value as DispatchMode)}
         >
           <option value="kraken">kraken</option>
-          <option value="council">council</option>
           <option value="zelari">zelari</option>
         </select>
         <select

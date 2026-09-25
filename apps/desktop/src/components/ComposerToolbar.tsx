@@ -1,7 +1,7 @@
 /**
- * Composer pills (grok-round): the three controls that used to sit in the
- * topbar are now quiet pills at the bottom-left INSIDE the composer capsule —
- * model, tool permissions, run mode. The topbar keeps only title / folder /
+ * Composer pills (grok-round): the controls that used to sit in the topbar
+ * are quiet pills at the bottom-left INSIDE the composer capsule — model, run
+ * mode, tentacles, tool permissions. The topbar keeps only title / folder /
  * todos, which is what makes it read as "lighter".
  *
  * Nothing here owns behaviour: each popover re-mounts the SAME control the
@@ -16,9 +16,9 @@
  *     sources of truth;
  *   - Mode / Phase / Graph / Gauntlet keep their own components and their own
  *     disable rules (`ModeToggle` is also disabled while Graph is on);
- *   - the mode pill also carries the per-tentacle thinking-effort selects
- *     (ADR-0017): the same three `kraken*Thinking` prefs Settings writes, same
- *     `patchDesktopPrefs` path, and `inherit` IS the empty inherit value.
+ *   - the tentacles pill hosts `TentaclesPanel`: delegation plus per-role
+ *     model and thinking effort (ADR-0017) — the prefs Settings → Agents used
+ *     to own, same `patchDesktopPrefs` path, `""` = inherit throughout.
  *
  * Popovers are LOCAL state only: a `<button>` + an absolutely positioned
  * `<div>`, dismissed on Escape and on a pointer-down outside. The button and
@@ -31,19 +31,14 @@
  * bar had, so steer/queue is unaffected.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  normalizeThinkingEffort,
-  PERMISSION_PRESETS,
-  TENTACLE_THINKING_OPTIONS,
-  type PermissionPreset,
-  type ThinkingEffort,
-} from "../desktopPrefs";
+import { PERMISSION_PRESETS, type PermissionPreset } from "../desktopPrefs";
 import type { DesktopConfig, DispatchMode, WorkPhase } from "../types";
 import { GauntletToggle } from "./GauntletToggle";
 import { KrakenGraphToggle } from "./KrakenGraphToggle";
 import { ModeToggle } from "./ModeToggle";
 import { PhaseToggle } from "./PhaseToggle";
 import { ProviderModelBar } from "./ProviderModelBar";
+import { TentaclesPanel, tentaclesSummary, type TentaclePrefs } from "./TentaclesPanel";
 
 export interface ComposerToolbarProps {
   config: DesktopConfig | null;
@@ -59,16 +54,9 @@ export interface ComposerToolbarProps {
   /** The same pref Settings → Tool permissions writes. */
   permissionPreset: PermissionPreset;
   onPermissionPresetChange: (preset: PermissionPreset) => void;
-  /**
-   * Per-tentacle thinking-effort overrides (ADR-0017) — the same
-   * `kraken*Thinking` prefs the Settings surface writes; "" = inherit.
-   */
-  krakenExploreThinking: ThinkingEffort;
-  onKrakenExploreThinkingChange: (effort: ThinkingEffort) => void;
-  krakenGeneralThinking: ThinkingEffort;
-  onKrakenGeneralThinkingChange: (effort: ThinkingEffort) => void;
-  krakenVerifyThinking: ThinkingEffort;
-  onKrakenVerifyThinkingChange: (effort: ThinkingEffort) => void;
+  /** Delegation + per-role tentacle model/thinking overrides; "" = inherit. */
+  tentacles: TentaclePrefs;
+  onTentaclesChange: (partial: Partial<TentaclePrefs>) => void;
   mode: DispatchMode;
   onModeChange: (mode: DispatchMode) => void;
   phase: WorkPhase;
@@ -79,7 +67,7 @@ export interface ComposerToolbarProps {
   onGauntletChange: (value: boolean) => void;
 }
 
-type PillId = "model" | "permissions" | "mode";
+type PillId = "model" | "mode" | "tentacles" | "permissions";
 
 /**
  * One pill + its panel. The wrapper is the dismissal boundary, and it also
@@ -164,12 +152,8 @@ export function ComposerToolbar({
   onStatus,
   permissionPreset,
   onPermissionPresetChange,
-  krakenExploreThinking,
-  onKrakenExploreThinkingChange,
-  krakenGeneralThinking,
-  onKrakenGeneralThinkingChange,
-  krakenVerifyThinking,
-  onKrakenVerifyThinkingChange,
+  tentacles,
+  onTentaclesChange,
   mode,
   onModeChange,
   phase,
@@ -198,34 +182,6 @@ export function ComposerToolbar({
     .filter(Boolean)
     .join(" · ");
 
-  /** One row per tentacle kind — label, current pref, and the handler that
-   *  patches THAT pref (`""` = inherit, never a second sentinel string). */
-  const tentacleThinking: Array<{
-    kind: string;
-    label: string;
-    value: ThinkingEffort;
-    onChange: (effort: ThinkingEffort) => void;
-  }> = [
-    {
-      kind: "explore",
-      label: "Explore",
-      value: krakenExploreThinking,
-      onChange: onKrakenExploreThinkingChange,
-    },
-    {
-      kind: "general",
-      label: "General",
-      value: krakenGeneralThinking,
-      onChange: onKrakenGeneralThinkingChange,
-    },
-    {
-      kind: "verify",
-      label: "Verify",
-      value: krakenVerifyThinking,
-      onChange: onKrakenVerifyThinkingChange,
-    },
-  ];
-
   return (
     <div className="composer-pills">
       <Pill
@@ -250,39 +206,6 @@ export function ComposerToolbar({
           onConfigRefresh={onConfigRefresh}
           onStatus={onStatus}
         />
-      </Pill>
-
-      <Pill
-        id="permissions"
-        label="Tool permissions"
-        text={permissionPreset}
-        title="Tool permission preset — the same pref as Settings → Tool permissions"
-        disabled={disabled}
-        openId={openId}
-        onToggle={toggle}
-        onClose={close}
-      >
-        <div className="composer-popover-title">Tool permissions</div>
-        <select
-          className="composer-popover-select"
-          value={permissionPreset}
-          disabled={disabled}
-          aria-label="Permission preset"
-          title="Applies to every run from this window (per-turn, sidecar-wide)"
-          onChange={(e) =>
-            onPermissionPresetChange(e.target.value as PermissionPreset)
-          }
-        >
-          {PERMISSION_PRESETS.map((preset) => (
-            <option key={preset} value={preset}>
-              {preset}
-            </option>
-          ))}
-        </select>
-        <p className="composer-popover-help">
-          How the sidecar treats commands and network. Unknown presets fall back
-          to standard — the sidecar stays fail-closed.
-        </p>
       </Pill>
 
       <Pill
@@ -325,33 +248,58 @@ export function ComposerToolbar({
             onChange={onGauntletChange}
           />
         </div>
-        {/* Per-tentacle thinking effort (ADR-0017): the quiet section of this
-            popover. `inherit` (= "") plus the CLI effort enum, one select per
-            tentacle kind, through the same patchDesktopPrefs path. */}
-        <div className="composer-popover-section">
-          <span className="composer-popover-title">Tentacle thinking</span>
-          {tentacleThinking.map((row) => (
-            <label key={row.kind} className="composer-popover-row">
-              <span className="composer-popover-label">{row.label}</span>
-              <select
-                className="composer-popover-select"
-                value={row.value || "inherit"}
-                disabled={disabled}
-                aria-label={`${row.label} tentacle thinking effort`}
-                title="Applies to every run from this window (per-turn, one tentacle kind)"
-                onChange={(e) =>
-                  row.onChange(normalizeThinkingEffort(e.target.value))
-                }
-              >
-                {TENTACLE_THINKING_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
+      </Pill>
+
+      <Pill
+        id="tentacles"
+        label="Tentacles"
+        text={tentaclesSummary(tentacles)}
+        title="Delegation and the model / thinking of each tentacle"
+        disabled={disabled}
+        openId={openId}
+        onToggle={toggle}
+        onClose={close}
+      >
+        <TentaclesPanel
+          config={config}
+          provider={provider}
+          value={tentacles}
+          disabled={disabled}
+          onChange={onTentaclesChange}
+        />
+      </Pill>
+
+      <Pill
+        id="permissions"
+        label="Tool permissions"
+        text={permissionPreset}
+        title="Tool permission preset — the same pref as Settings → Tool permissions"
+        disabled={disabled}
+        openId={openId}
+        onToggle={toggle}
+        onClose={close}
+      >
+        <div className="composer-popover-title">Tool permissions</div>
+        <select
+          className="composer-popover-select"
+          value={permissionPreset}
+          disabled={disabled}
+          aria-label="Permission preset"
+          title="Applies to every run from this window (per-turn, sidecar-wide)"
+          onChange={(e) =>
+            onPermissionPresetChange(e.target.value as PermissionPreset)
+          }
+        >
+          {PERMISSION_PRESETS.map((preset) => (
+            <option key={preset} value={preset}>
+              {preset}
+            </option>
           ))}
-        </div>
+        </select>
+        <p className="composer-popover-help">
+          How the sidecar treats commands and network. Unknown presets fall back
+          to standard — the sidecar stays fail-closed.
+        </p>
       </Pill>
     </div>
   );

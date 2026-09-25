@@ -15,8 +15,9 @@
  *     channel every other Settings panel uses), then refreshes;
  *   - with no chat model yet the file value is what is shown (fresh start), and
  *     with no drift there is nothing to save;
- *   - the tentacle picks stay on the prefs store and the card SAYS they do not
- *     change the main chat model.
+ *   - the tentacle picks (delegation + per-role models) moved to the composer
+ *     Tentacles pill: Settings renders none of them, points there, and still
+ *     SAYS they do not change the main chat model.
  *
  * vi.mock('react'): apps/desktop has its own React copy (npm --prefix install)
  * while the root @testing-library/react uses the root copy — two Reacts in one
@@ -147,28 +148,24 @@ describe("AgentsSection - Lead model follows the active chat", () => {
   });
 });
 
-describe("AgentsSection - tentacle models are a separate store", () => {
-  it("says tentacle models do not change the main chat model", () => {
+describe("AgentsSection - tentacles live on the composer", () => {
+  it("points to the Tentacles pill and says it never changes the chat model", () => {
     renderSection({ activeChatModel: "grok-3-fast" });
 
-    expect(document.body.textContent).toContain(
-      "These never change the model of the main chat",
-    );
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Tentacles pill");
+    expect(text).toContain("These never change the model of the main chat");
   });
 
-  it("keeps tentacle picks on the prefs store, never on the chat", () => {
-    const { onPrefsChange } = renderSection({ activeChatModel: "grok-3-fast" });
+  it("renders no delegation or per-role model controls any more", () => {
+    renderSection({ activeChatModel: "grok-3-fast" });
 
-    const explore = Array.from(document.querySelectorAll("select")).find((s) =>
-      s.closest("label")?.textContent?.includes("Explorer"),
-    ) as HTMLSelectElement;
-    expect(explore).toBeTruthy();
-    fireEvent.change(explore, { target: { value: "grok-3-fast" } });
-
-    expect(onPrefsChange).toHaveBeenCalledWith({ krakenExploreModel: "grok-3-fast" });
-    // The chat model is untouched by a tentacle pick, and nothing is written
-    // to provider.json from this card for sub-agent overrides.
-    expect(setConfigMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("radio", { name: /Single agent/ })).toBeNull();
+    expect(screen.queryByText(/Customize per role/)).toBeNull();
+    const roleSelect = Array.from(document.querySelectorAll("select")).find((s) =>
+      /Explorer|Builder|Checker|Graph planner/.test(s.closest("label")?.textContent ?? ""),
+    );
+    expect(roleSelect).toBeUndefined();
   });
 });
 
@@ -195,10 +192,8 @@ describe("AgentsSection - simplified controls", () => {
     expect(onPrefsChange).toHaveBeenCalledWith({ krakenCrossModel: false });
   });
 
-  it("delegation and permissions are described choices", () => {
+  it("permissions are described choices", () => {
     const { onPrefsChange } = renderSection();
-    fireEvent.click(screen.getByRole("radio", { name: /Single agent/ }));
-    expect(onPrefsChange).toHaveBeenCalledWith({ krakenDelegation: "lead-only" });
     fireEvent.click(screen.getByRole("radio", { name: /Full auto/ }));
     expect(onPrefsChange).toHaveBeenCalledWith({ permissionPreset: "yolo" });
   });

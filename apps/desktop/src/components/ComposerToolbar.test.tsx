@@ -1,16 +1,20 @@
 // @vitest-environment jsdom
 /**
  * ComposerToolbar (grok-round) contract under test:
- *   - three pills render with the CURRENT values (model, permission preset,
- *     mode · phase [+ Graph/Gauntlet]) and no panel is open up front;
+ *   - four pills render with the CURRENT values (model, mode · phase
+ *     [+ Graph/Gauntlet], tentacles, permission preset) and no panel is open
+ *     up front;
  *   - the model pill hosts the redesigned `ProviderModelBar` (grok-style model
  *     option list + segmented thinking effort): the provider select, the model
  *     listbox, the effort radios and the refresh row keep their accessible
  *     names and their handlers, so discovery lost nothing moving off the topbar;
  *   - the permission pill drives the SAME pref Settings edits (same
  *     `PERMISSION_PRESETS`, same single-value select semantics);
- *   - the mode pill carries Mode / Phase / Graph / Gauntlet, with the graph
- *     exception rule preserved (Mode is disabled while Graph is on);
+ *   - the mode pill carries Mode (Kraken / Zelari — Council is gone) / Phase /
+ *     Graph / Gauntlet, with the graph exception rule preserved (Mode is
+ *     disabled while Graph is on);
+ *   - the tentacles pill edits delegation and each role's model / thinking
+ *     through ONE partial-prefs handler, `""` = inherit (ADR-0017);
  *   - dismissal: Escape, a pointer-down outside, and re-clicking the pill;
  *   - `disabled` (a live run) reaches every choice control.
  *
@@ -20,7 +24,7 @@
  */
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_DESKTOP_PREFS, PERMISSION_PRESETS } from "../desktopPrefs";
+import { DEFAULT_DESKTOP_PREFS, PERMISSION_PRESETS, type DesktopPrefs } from "../desktopPrefs";
 import type { DesktopConfig } from "../types";
 import { ComposerToolbar, type ComposerToolbarProps } from "./ComposerToolbar";
 
@@ -77,12 +81,8 @@ function props(over: Partial<ComposerToolbarProps> = {}): ComposerToolbarProps {
     onThinkingChange: () => {},
     permissionPreset: DEFAULT_DESKTOP_PREFS.permissionPreset,
     onPermissionPresetChange: () => {},
-    krakenExploreThinking: DEFAULT_DESKTOP_PREFS.krakenExploreThinking,
-    onKrakenExploreThinkingChange: () => {},
-    krakenGeneralThinking: DEFAULT_DESKTOP_PREFS.krakenGeneralThinking,
-    onKrakenGeneralThinkingChange: () => {},
-    krakenVerifyThinking: DEFAULT_DESKTOP_PREFS.krakenVerifyThinking,
-    onKrakenVerifyThinkingChange: () => {},
+    tentacles: DEFAULT_DESKTOP_PREFS,
+    onTentaclesChange: () => {},
     mode: "kraken",
     onModeChange: () => {},
     phase: "build",
@@ -104,6 +104,7 @@ describe("ComposerToolbar - pills", () => {
     expect(pill("Provider and model").textContent).toBe("grok-4");
     expect(pill("Tool permissions").textContent).toBe("standard");
     expect(pill("Run mode").textContent).toBe("kraken · build");
+    expect(pill("Tentacles").textContent).toBe("Tentacles · Auto");
     // No panel is mounted until its pill is used.
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByLabelText("Provider")).toBeNull();
@@ -241,23 +242,33 @@ describe("ComposerToolbar - mode pill", () => {
     );
     fireEvent.click(pill("Run mode"));
 
-    fireEvent.click(screen.getByText("Council"));
+    fireEvent.click(screen.getByText("Zelari"));
     fireEvent.click(screen.getByText("Plan"));
     fireEvent.click(screen.getByText("Graph"));
     fireEvent.click(screen.getByText("Gauntlet"));
 
     expect(calls).toEqual([
-      "mode:council",
+      "mode:zelari",
       "phase:plan",
       "graph:true",
       "gauntlet:true",
     ]);
   });
 
+  it("offers Kraken and Zelari only — Council is no longer a Desktop mode", () => {
+    render(<ComposerToolbar {...props()} />);
+    fireEvent.click(pill("Run mode"));
+    const modes = within(screen.getByRole("group", { name: "Dispatch mode" }));
+    expect(modes.getAllByRole("button").map((b) => b.textContent)).toEqual(["Kraken", "Zelari"]);
+    expect(screen.queryByText("Council")).toBeNull();
+    // The tentacle controls moved to their own pill.
+    expect(screen.queryByLabelText("Explorer thinking effort")).toBeNull();
+  });
+
   it("keeps mode disabled while Graph is on (the topbar rule)", () => {
     render(<ComposerToolbar {...props({ krakenGraph: true })} />);
     fireEvent.click(pill("Run mode"));
-    expect((screen.getByText("Council") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText("Zelari") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByText("Kraken") as HTMLButtonElement).disabled).toBe(true);
     // Phase and the two exception toggles stay usable.
     expect((screen.getByText("Plan") as HTMLButtonElement).disabled).toBe(false);
@@ -313,7 +324,7 @@ describe("ComposerToolbar - dismissal", () => {
 describe("ComposerToolbar - live run", () => {
   it("disables every pill and every choice control while running", () => {
     render(<ComposerToolbar {...props({ disabled: true })} />);
-    for (const label of ["Provider and model", "Tool permissions", "Run mode"]) {
+    for (const label of ["Provider and model", "Tool permissions", "Run mode", "Tentacles"]) {
       expect((pill(label) as HTMLButtonElement).disabled).toBe(true);
     }
     // A disabled pill cannot be opened, so no control is reachable mid-run.
@@ -322,20 +333,68 @@ describe("ComposerToolbar - live run", () => {
   });
 });
 
-describe("ComposerToolbar - tentacle thinking (ADR-0017)", () => {
-  const selectFor = (label: string) =>
-    screen.getByLabelText(`${label} tentacle thinking effort`) as HTMLSelectElement;
+describe("ComposerToolbar - tentacles pill", () => {
+  const tentacles = (over: Partial<DesktopPrefs> = {}): DesktopPrefs => ({
+    ...DEFAULT_DESKTOP_PREFS,
+    ...over,
+  });
+  const open = () => fireEvent.click(pill("Tentacles"));
+  const select = (label: string) => screen.getByLabelText(label) as HTMLSelectElement;
 
-  it("renders the quiet section with one labelled select per tentacle kind", () => {
+  it("summarizes delegation and customized roles on the pill", () => {
+    render(
+      <ComposerToolbar
+        {...props({
+          tentacles: tentacles({
+            krakenDelegation: "lead-only",
+            krakenExploreModel: "grok-4-mini",
+            krakenVerifyThinking: "high",
+          }),
+        })}
+      />,
+    );
+    expect(pill("Tentacles").textContent).toBe("Tentacles · Lead only · 2 custom");
+  });
+
+  it("switches delegation through the partial-prefs handler", () => {
+    const calls: Partial<DesktopPrefs>[] = [];
+    render(<ComposerToolbar {...props({ onTentaclesChange: (p) => calls.push(p) })} />);
+    open();
+
+    const group = within(screen.getByRole("group", { name: "Delegation" }));
+    expect(group.getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Automatic",
+      "Prefer",
+      "Maximum",
+      "Lead only",
+    ]);
+    expect(group.getByText("Automatic").getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(group.getByText("Maximum"));
+    expect(calls).toEqual([{ krakenDelegation: "aggressive" }]);
+  });
+
+  it("offers the chat provider's models unqualified and other providers qualified", () => {
     render(<ComposerToolbar {...props()} />);
-    fireEvent.click(pill("Run mode"));
+    open();
 
-    expect(screen.getByText("Tentacle thinking")).toBeTruthy();
-    for (const label of ["Explore", "General", "Verify"]) {
-      const select = selectFor(label);
+    for (const role of ["Explorer", "Builder", "Checker", "Planner"]) {
+      const s = select(`${role} model`);
+      expect(s.value).toBe(""); // inherit = the main model
+      expect(Array.from(s.options).map((o) => o.value)).toEqual([
+        "",
+        "grok-4",
+        "grok-4-mini",
+        "anthropic/claude-sonnet-4",
+      ]);
+    }
+    // The planner has no thinking override; the three tentacle kinds do.
+    expect(screen.queryByLabelText("Planner thinking effort")).toBeNull();
+    for (const role of ["Explorer", "Builder", "Checker"]) {
+      const s = select(`${role} thinking effort`);
       // "" (inherit) renders as the first option, never as a blank select.
-      expect(select.value).toBe("inherit");
-      expect(Array.from(select.options).map((o) => o.value)).toEqual([
+      expect(s.value).toBe("inherit");
+      expect(Array.from(s.options).map((o) => o.value)).toEqual([
         "inherit",
         "auto",
         "off",
@@ -348,27 +407,64 @@ describe("ComposerToolbar - tentacle thinking (ADR-0017)", () => {
     }
   });
 
-  it("shows the stored effort and reports a change through its handler", () => {
-    const calls: string[] = [];
+  it("writes each role to its own pref, with inherit as the empty value", () => {
+    const calls: Partial<DesktopPrefs>[] = [];
     render(
       <ComposerToolbar
         {...props({
-          krakenGeneralThinking: "medium",
-          onKrakenExploreThinkingChange: (v) => calls.push(`explore:${v}`),
-          onKrakenGeneralThinkingChange: (v) => calls.push(`general:${v}`),
-          onKrakenVerifyThinkingChange: (v) => calls.push(`verify:${v}`),
+          tentacles: tentacles({ krakenGeneralThinking: "medium" }),
+          onTentaclesChange: (p) => calls.push(p),
         })}
       />,
     );
-    fireEvent.click(pill("Run mode"));
+    open();
+    expect(select("Builder thinking effort").value).toBe("medium");
 
-    expect(selectFor("General").value).toBe("medium");
+    fireEvent.change(select("Explorer model"), { target: { value: "grok-4-mini" } });
+    fireEvent.change(select("Checker model"), { target: { value: "anthropic/claude-sonnet-4" } });
+    fireEvent.change(select("Planner model"), { target: { value: "grok-4-mini" } });
+    fireEvent.change(select("Explorer thinking effort"), { target: { value: "high" } });
+    fireEvent.change(select("Builder thinking effort"), { target: { value: "inherit" } });
 
-    fireEvent.change(selectFor("Explore"), { target: { value: "high" } });
-    fireEvent.change(selectFor("General"), { target: { value: "max" } });
-    fireEvent.change(selectFor("Verify"), { target: { value: "inherit" } });
+    expect(calls).toEqual([
+      { krakenExploreModel: "grok-4-mini" },
+      { krakenVerifyModel: "anthropic/claude-sonnet-4" },
+      { krakenPlannerModel: "grok-4-mini" },
+      { krakenExploreThinking: "high" },
+      { krakenGeneralThinking: "" },
+    ]);
+  });
 
-    // `inherit` comes back as the empty inherit pref, not as "inherit".
-    expect(calls).toEqual(["explore:high", "general:max", "verify:"]);
+  it("keeps a saved model that is no longer listed, and resets every role at once", () => {
+    const calls: Partial<DesktopPrefs>[] = [];
+    render(
+      <ComposerToolbar
+        {...props({
+          tentacles: tentacles({ krakenGeneralModel: "retired-model" }),
+          onTentaclesChange: (p) => calls.push(p),
+        })}
+      />,
+    );
+    open();
+    expect(select("Builder model").value).toBe("retired-model");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(calls).toEqual([
+      {
+        krakenExploreModel: "",
+        krakenGeneralModel: "",
+        krakenVerifyModel: "",
+        krakenPlannerModel: "",
+        krakenExploreThinking: "",
+        krakenGeneralThinking: "",
+        krakenVerifyThinking: "",
+      },
+    ]);
+  });
+
+  it("offers no reset while every role inherits", () => {
+    render(<ComposerToolbar {...props()} />);
+    open();
+    expect(screen.queryByRole("button", { name: "Reset" })).toBeNull();
   });
 });

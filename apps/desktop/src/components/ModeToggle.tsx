@@ -1,8 +1,10 @@
 import type { DispatchMode } from "../types";
 
+/** Council is no longer offered in the Desktop: Kraken covers multi-role work
+ *  through its tentacles (composer → Tentacles). Legacy council chats and
+ *  defaults normalize to Kraken (`chatStorage.normalizeConv`, `loadDefaults`). */
 const MODES: { id: DispatchMode; label: string; hint: string }[] = [
-  { id: "kraken", label: "Kraken", hint: "Super-agent lead" },
-  { id: "council", label: "Council", hint: "6 members" },
+  { id: "kraken", label: "Kraken", hint: "Super-agent lead with tentacles" },
   { id: "zelari", label: "Zelari", hint: "Mission loop" },
 ];
 

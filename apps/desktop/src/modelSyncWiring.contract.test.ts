@@ -95,7 +95,7 @@ describe("model-sync: Settings → Agents sees the live chat model", () => {
     expect(shell).toContain("activeChatModel={activeChatModel}");
   });
 
-  it("uses it for the Lead row and explains the tentacle models", () => {
+  it("uses it for the Lead row and points to the composer for tentacle models", () => {
     expect(agents).toContain("const leadModel = leadChatModel || leadConfigModel");
     // The drift is closable from the card, through the same config write.
     expect(agents).toContain(
@@ -103,5 +103,6 @@ describe("model-sync: Settings → Agents sees the live chat model", () => {
     );
     expect(agents).toContain("Make {leadChatModel} the default");
     expect(agents).toContain("These never change the model of the main chat");
+    expect(agents).toContain("Tentacles pill");
   });
 });

@@ -107,7 +107,7 @@ export function SystemSection({ cli, config, onRefresh }: SystemSectionProps) {
             <dt>
               <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>
             </dt>
-            <dd>Cycle mode (Kraken → Council → Zelari)</dd>
+            <dd>Switch mode (Kraken ↔ Zelari)</dd>
             <dt>
               <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>
             </dt>

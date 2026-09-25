@@ -7839,8 +7839,8 @@ kbd {
   gap: 8px;
   min-width: 250px;
   max-width: min(440px, 72vw);
-  /* the mode panel grew a section (tentacle thinking): never taller than the
-     viewport — scroll instead of clipping the last control */
+  /* the tentacles panel is the tallest one: never taller than the viewport —
+     scroll instead of clipping the last control */
   max-height: min(70vh, 520px);
   overflow-y: auto;
   padding: 12px;
@@ -7902,28 +7902,78 @@ kbd {
   color: var(--text-muted);
 }
 
-/* Tentacle thinking (mode popover): ONE quiet labelled select per tentacle
-   kind — the select shrinks to the label pair instead of claiming the full
-   popover width. Values are the CLI's effort enum; "inherit" is the empty
-   inherit pref (`kraken*Thinking: ""`). */
-.composer-popover-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-subtle);
-}
-
 .composer-popover-label {
   font-size: 11.5px;
   color: var(--text-muted);
 }
 
-.composer-popover-section .composer-popover-select {
-  width: auto;
-  min-width: 96px;
+/* Tentacles pill: delegation as one full-width segmented row, then a
+   role × (model, thinking) grid. Each role row is a subgrid, so the three
+   columns line up under their headers whatever the model names are. */
+.composer-popover:has(.tentacles-panel) {
+  min-width: 380px;
+}
+
+.tentacles-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tentacles-delegation {
+  display: flex;
+  width: 100%;
+}
+
+.tentacles-delegation .seg-btn {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.tentacles-roles {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+  transition: opacity 120ms ease;
+}
+
+/* Lead only: tentacles spawn only on request, so the grid steps back (still
+   editable — an explicit "use a sub-agent" still honours these picks). */
+.tentacles-roles.is-muted {
+  opacity: 0.6;
+}
+
+.tentacles-role {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.tentacles-role .composer-popover-label {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.tentacles-role .composer-popover-select {
   padding: 4px 6px;
   font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.tentacles-role .tentacles-na {
+  justify-self: center;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.tentacles-reset {
+  flex-shrink: 0;
+  font-size: 11.5px;
 }
 
 /* the model picker inside the popover: grok-style option list, not three

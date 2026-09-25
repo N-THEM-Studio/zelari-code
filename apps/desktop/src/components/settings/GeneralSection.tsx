@@ -35,7 +35,6 @@ export interface GeneralSectionProps {
 
 const MODE_OPTIONS: { value: DispatchMode; label: string }[] = [
   { value: "kraken", label: "Kraken — super-agent with tentacles" },
-  { value: "council", label: "Council — multi-role pipeline" },
   { value: "zelari", label: "Zelari — long-running missions" },
 ];
 

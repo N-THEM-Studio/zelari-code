@@ -121,7 +121,8 @@ function normalizeConv(
 ): Conversation {
   return {
     ...c,
-    mode: c.mode === "council" || c.mode === "zelari" ? c.mode : "kraken",
+    // Council left the Desktop mode picker: legacy council chats reopen as Kraken.
+    mode: c.mode === "zelari" ? "zelari" : "kraken",
     phase: c.phase === "plan" ? "plan" : "build",
     messages: Array.isArray(c.messages) ? c.messages : [],
     archived: !!c.archived,

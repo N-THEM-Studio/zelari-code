@@ -1,28 +1,22 @@
 /**
- * Agents — how the Kraken lead splits work and proves it is done.
+ * Agents — how the Kraken lead proves the work is done.
  *
  * Laid out for someone who has never heard of "tentacles": the main model,
- * then delegation as described choices, optional per-role models (collapsed
- * until used), quality checks as plain toggles, tool permissions as described
- * choices, and the execution profile under Advanced. Prefs autosave to
- * localStorage; the second-opinion model writes to the CLI config.
+ * quality checks as plain toggles, tool permissions as described choices, and
+ * the execution profile under Advanced. Prefs autosave to localStorage; the
+ * second-opinion model writes to the CLI config.
  *
  * Every control here reaches the run: prefs ride run.turn per turn (the CLI
  * applies them to that turn only). Removed on purpose: the separate missions
  * strict toggle (the proof requirement covers missions too), Best-of-N (the
- * CLI verifier never enables it) and the Gauntlet toggle (it lives on the
- * composer bar, per chat).
+ * CLI verifier never enables it), the Gauntlet toggle, and delegation plus the
+ * per-role tentacle models — those live on the composer (Run mode and
+ * Tentacles pills), next to the prompt they shape.
  */
 import { useEffect, useState } from "react";
 import { setAppConfig } from "../../agentClient";
-import {
-  EXECUTION_PROFILES,
-  type DelegationPolicy,
-  type DesktopPrefs,
-  type ExecutionProfile,
-} from "../../desktopPrefs";
+import { EXECUTION_PROFILES, type DesktopPrefs, type ExecutionProfile } from "../../desktopPrefs";
 import type { DesktopConfig } from "../../types";
-import { KrakenModelSelect } from "../KrakenModelSelect";
 import { PermissionsSection } from "../PermissionsSection";
 import { SettingHelp } from "../SettingHelp";
 import {
@@ -33,7 +27,6 @@ import {
   SettingsCard,
   SettingsRow,
   Toggle,
-  type ChoiceOption,
 } from "./primitives";
 import { useSettingAction } from "./useSettingAction";
 
@@ -46,30 +39,6 @@ export interface AgentsSectionProps {
   onPrefsChange: (partial: Partial<DesktopPrefs>) => void;
   onRefresh: () => Promise<void>;
 }
-
-const DELEGATION_OPTIONS: readonly ChoiceOption<DelegationPolicy>[] = [
-  {
-    value: "automatic",
-    label: "Automatic",
-    badge: "Recommended",
-    description: "Kraken decides: small tasks it does itself, bigger ones it splits across sub-agents.",
-  },
-  {
-    value: "prefer",
-    label: "Prefer sub-agents",
-    description: "Delegate most non-trivial research and edits — more parallel, uses more tokens.",
-  },
-  {
-    value: "aggressive",
-    label: "Maximum delegation",
-    description: "Kraken only coordinates; almost everything goes to sub-agents.",
-  },
-  {
-    value: "lead-only",
-    label: "Single agent",
-    description: "No sub-agents unless you ask for them — simplest and cheapest.",
-  },
-];
 
 type SecondOpinion = "off" | "same" | "custom";
 
@@ -91,10 +60,6 @@ export function AgentsSection({
   const providers = config?.providers ?? [];
   const activeProvider = config?.activeProviderId ?? "";
   const active = providers.find((p) => p.id === activeProvider) ?? null;
-  const models = active?.models ?? [];
-  const crossProviderGroups = providers
-    .filter((p) => p.id !== activeProvider)
-    .map((p) => ({ id: p.id, label: p.displayName, models: p.models ?? [] }));
 
   // SLICE4(model-sync): the Lead runs on the CHAT model. Show the live chat
   // value; when it drifts from the saved default, say so and offer to save it
@@ -110,13 +75,6 @@ export function AgentsSection({
       await onRefresh();
       return `Saved ${leadChatModel} as the default model`;
     });
-
-  const roleOverrides = [
-    prefs.krakenExploreModel,
-    prefs.krakenGeneralModel,
-    prefs.krakenVerifyModel,
-    prefs.krakenPlannerModel,
-  ].filter((m) => m.trim()).length;
 
   // ── Second opinion (advisory verifier) ────────────────────────────────
   const override = config?.krakenVerifier ?? null;
@@ -164,10 +122,7 @@ export function AgentsSection({
     <>
       <div className="settings-section-head">
         <h2>Agents</h2>
-        <p>
-          How Zelari's lead agent (Kraken) splits work across helper sub-agents, and how it proves
-          the work is really done.
-        </p>
+        <p>How Zelari's lead agent (Kraken) proves the work is really done.</p>
       </div>
 
       <SettingsCard
@@ -175,7 +130,7 @@ export function AgentsSection({
         help={
           <SettingHelp id="tooltip-main-model" label="Main model">
             Kraken, the lead agent, always runs on the chat model. Sub-agents use it too unless you
-            give a role its own model below.
+            give a role its own model from the Tentacles pill under the chat.
           </SettingHelp>
         }
       >
@@ -190,85 +145,10 @@ export function AgentsSection({
             </button>
           </p>
         ) : null}
-      </SettingsCard>
-
-      <SettingsCard
-        title="Delegation"
-        description="When Kraken hands work to helper sub-agents instead of doing it itself."
-        help={
-          <SettingHelp id="tooltip-delegation" label="Delegation">
-            Sub-agents (“tentacles”) are short-lived helpers: explorers read and research, builders
-            write code, checkers verify. They run in parallel but each one costs tokens.
-          </SettingHelp>
-        }
-      >
-        <ChoiceList
-          name="delegation"
-          ariaLabel="Delegation"
-          value={prefs.krakenDelegation}
-          options={DELEGATION_OPTIONS}
-          onChange={(v) => onPrefsChange({ krakenDelegation: v })}
-        />
-      </SettingsCard>
-
-      <SettingsCard
-        title="Sub-agent models"
-        description="By default every sub-agent uses the main model. Give a role its own model only to save cost (a fast model for exploring) or to raise quality (a strong model for writing code)."
-      >
-        <Collapsible
-          summary={roleOverrides > 0 ? `Customized roles (${roleOverrides})` : "Customize per role"}
-          hint="Optional"
-          defaultOpen={roleOverrides > 0}
-        >
-          <KrakenModelSelect
-            label="Explorer — reads and researches"
-            tooltipId="tooltip-kraken-explore"
-            tooltip="Searches and reads the codebase; never edits. A fast, cheap model is usually enough."
-            value={prefs.krakenExploreModel}
-            models={models}
-            groups={crossProviderGroups}
-            activeProviderLabel={active?.displayName ?? activeProvider}
-            inheritLabel="Same as main model"
-            onChange={(v) => onPrefsChange({ krakenExploreModel: v })}
-          />
-          <KrakenModelSelect
-            label="Builder — writes code"
-            tooltipId="tooltip-kraken-general"
-            tooltip="Implements changes in files. Prefer your strongest coding model."
-            value={prefs.krakenGeneralModel}
-            models={models}
-            groups={crossProviderGroups}
-            activeProviderLabel={active?.displayName ?? activeProvider}
-            inheritLabel="Same as main model"
-            onChange={(v) => onPrefsChange({ krakenGeneralModel: v })}
-          />
-          <KrakenModelSelect
-            label="Checker — verifies the work"
-            tooltipId="tooltip-kraken-verify"
-            tooltip="Runs tests and checks what the builder did before Kraken may call the task done."
-            value={prefs.krakenVerifyModel}
-            models={models}
-            groups={crossProviderGroups}
-            activeProviderLabel={active?.displayName ?? activeProvider}
-            inheritLabel="Same as main model"
-            onChange={(v) => onPrefsChange({ krakenVerifyModel: v })}
-          />
-          <KrakenModelSelect
-            label="Graph planner"
-            tooltipId="tooltip-kraken-planner"
-            tooltip="Only used by Kraken Graph: turns a goal into a plan of sub-tasks. A fast model works well."
-            value={prefs.krakenPlannerModel}
-            models={models}
-            groups={crossProviderGroups}
-            activeProviderLabel={active?.displayName ?? activeProvider}
-            inheritLabel="Same as main model"
-            onChange={(v) => onPrefsChange({ krakenPlannerModel: v })}
-          />
-          <p className="s-card-desc" style={{ marginBottom: 0 }}>
-            These never change the model of the main chat. Models from another provider need that
-            provider connected in Models &amp; Providers.
-          </p>
-        </Collapsible>
+        <p className="s-card-desc" style={{ marginBottom: 0 }}>
+          Delegation and the model of each sub-agent (“tentacle”) are set from the
+          Tentacles pill under the message box. These never change the model of the main chat.
+        </p>
       </SettingsCard>
 
       <SettingsCard
@@ -411,7 +291,7 @@ export function AgentsSection({
             help={
               <SettingHelp id="tooltip-profile" label="Execution profile">
                 Which capabilities the engine wires up for a run. Keep “Standard” unless you know
-                you need another profile; the chat mode picker already covers Council and Missions.
+                you need another profile; the chat mode picker already covers Missions.
               </SettingHelp>
             }
           >

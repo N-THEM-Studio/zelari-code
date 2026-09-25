@@ -491,10 +491,8 @@ function loadDefaults(): { mode: DispatchMode; phase: WorkPhase } {
     const raw = localStorage.getItem(LS_DEFAULTS);
     if (!raw) return { mode: "kraken", phase: "build" };
     const p = JSON.parse(raw) as { mode?: string; phase?: string };
-    const mode =
-      p.mode === "council" || p.mode === "zelari" || p.mode === "kraken"
-        ? p.mode
-        : "kraken";
+    // Council is no longer a Desktop mode: a saved council default → Kraken.
+    const mode = p.mode === "zelari" ? "zelari" : "kraken";
     const phase = p.phase === "plan" ? "plan" : "build";
     return { mode, phase };
   } catch {
@@ -3508,7 +3506,7 @@ export default function App() {
         krakenVerifyModel: prefs.krakenVerifyModel || undefined,
         krakenPlannerModel: prefs.krakenPlannerModel || undefined,
         // Per-tentacle thinking effort (ADR-0017), same per-kind keys as the
-        // models above and the same composer popover edits. Empty = inherit.
+        // models above, edited in the composer Tentacles pill. Empty = inherit.
         krakenExploreThinking: prefs.krakenExploreThinking || undefined,
         krakenGeneralThinking: prefs.krakenGeneralThinking || undefined,
         krakenVerifyThinking: prefs.krakenVerifyThinking || undefined,
@@ -3654,7 +3652,7 @@ export default function App() {
       if (mod && e.shiftKey && e.code === "KeyD") {
         e.preventDefault();
         e.stopPropagation();
-        const order: DispatchMode[] = ["kraken", "council", "zelari"];
+        const order: DispatchMode[] = ["kraken", "zelari"];
         const cur = modeRef.current;
         const next = order[(order.indexOf(cur) + 1) % order.length];
         setMode(next);
@@ -4278,15 +4276,11 @@ export default function App() {
               permissionPreset: prefs.permissionPreset,
               onPermissionPresetChange: (permissionPreset) =>
                 setPrefs((prev) => patchDesktopPrefs(prev, { permissionPreset })),
-              krakenExploreThinking: prefs.krakenExploreThinking,
-              onKrakenExploreThinkingChange: (krakenExploreThinking) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { krakenExploreThinking })),
-              krakenGeneralThinking: prefs.krakenGeneralThinking,
-              onKrakenGeneralThinkingChange: (krakenGeneralThinking) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { krakenGeneralThinking })),
-              krakenVerifyThinking: prefs.krakenVerifyThinking,
-              onKrakenVerifyThinkingChange: (krakenVerifyThinking) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { krakenVerifyThinking })),
+              // Delegation + per-role tentacle overrides: the prefs Settings →
+              // Agents used to own, same patchDesktopPrefs → localStorage path.
+              tentacles: prefs,
+              onTentaclesChange: (partial) =>
+                setPrefs((prev) => patchDesktopPrefs(prev, partial)),
               mode,
               onModeChange,
               phase,

@@ -223,4 +223,16 @@ describe("loadConversations hardening", () => {
     expect(loaded[0]!.mode).toBe("kraken");
     expect(loaded[0]!.cwd).toBe("E:\\legacy");
   });
+
+  it("council chats reopen as kraken (council left the Desktop mode picker); zelari survives", () => {
+    (globalThis as { localStorage: Storage }).localStorage.setItem(
+      "zelari-desktop-chats-v1",
+      JSON.stringify([
+        { ...conv({ id: "c" }), mode: "council" },
+        { ...conv({ id: "z" }), mode: "zelari" },
+      ]),
+    );
+    const loaded = loadConversations()!;
+    expect(loaded.map((c) => c.mode)).toEqual(["kraken", "zelari"]);
+  });
 });
