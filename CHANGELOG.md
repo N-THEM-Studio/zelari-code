@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.65.0] - 2026-09-25
+
 ### Added
 
 - **Request composition in the metrics log** — every `kind: "message"` row records what the request was made of (system prompt, tool schemas with MCP split out, trailing context, user, assistant, tool results by tool), so cost can be split by source.
