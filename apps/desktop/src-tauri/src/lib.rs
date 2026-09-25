@@ -2125,8 +2125,12 @@ async fn stop_plan_watch(
 /// logged only — never a panic, never a surfaced error (a missing Node is
 /// already reported loudly by the first run).
 #[tauri::command]
-fn prefetch_harness_sidecar(sidecar: State<'_, Arc<HarnessSidecar>>) {
+fn prefetch_harness_sidecar(app: tauri::AppHandle, sidecar: State<'_, Arc<HarnessSidecar>>) {
     let sidecar = Arc::clone(sidecar.inner());
+    // Stash the handle BEFORE the spawn: the child's stderr drain writes
+    // zelari-sidecar.log and emits harness-sidecar-log only with a handle, and
+    // this prewarm is usually the call that spawns the sidecar.
+    sidecar.set_app_handle(app);
     tauri::async_runtime::spawn_blocking(move || {
         if let Err(e) = sidecar.ensure_started() {
             eprintln!("[harness-sidecar] prefetch failed: {e}");

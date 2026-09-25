@@ -700,32 +700,16 @@ impl HarnessSidecar {
         // zelari-sidecar.log. The durable file matters: events are lossy
         // across restarts and nothing else keeps the child's stderr, so this
         // log is the field-debugging record for "the model never answers".
+        //
+        // The AppHandle is resolved LAZILY, per line, until it is known: the
+        // W4.3 prewarm spawned the child before any command had stashed a
+        // handle, and a handle read once at spawn left that whole generation
+        // with no log file and no log events (2026-09-16 → 2026-09-24).
         {
-            let app = self.app.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let me = Arc::clone(self);
             thread::spawn(move || {
-                let mut log_file = app.as_ref().and_then(|app| {
-                    let dir = app.path().app_data_dir().ok()?.join("logs");
-                    std::fs::create_dir_all(&dir).ok()?;
-                    let path = dir.join("zelari-sidecar.log");
-                    // One-generation rotation: a hung CLI can emit stderr
-                    // for the whole boot-timeout window on every restart;
-                    // without a cap the log grows forever. 5 MiB is days of
-                    // healthy stderr. Windows rename fails on an existing
-                    // target, so drop the previous .old first.
-                    const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
-                    if std::fs::metadata(&path)
-                        .map(|m| m.len() > MAX_LOG_BYTES)
-                        .unwrap_or(false)
-                    {
-                        let _ = std::fs::remove_file(dir.join("zelari-sidecar.log.old"));
-                        let _ = std::fs::rename(&path, dir.join("zelari-sidecar.log.old"));
-                    }
-                    OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(path)
-                        .ok()
-                });
+                let mut app: Option<AppHandle> = None;
+                let mut log_file: Option<std::fs::File> = None;
                 // NOT reader.lines().map_while(Result::ok): one non-UTF8
                 // byte would end the iteration, kill the drain thread, fill
                 // the pipe and deadlock the child. Decode raw bytes lossily;
@@ -742,6 +726,10 @@ impl HarnessSidecar {
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
+                    }
+                    if app.is_none() {
+                        app = me.app.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        log_file = app.as_ref().and_then(open_sidecar_log);
                     }
                     if let Some(app) = app.as_ref() {
                         let _ = app.emit("harness-sidecar-log", json!({ "line": trimmed }));
@@ -1723,6 +1711,26 @@ impl HarnessSidecar {
             let _ = tx.send(copy);
         }
     }
+}
+
+/// Open `<app_data_dir>/logs/zelari-sidecar.log` for append, rotating it
+/// first. One-generation rotation: a hung CLI can emit stderr for the whole
+/// boot-timeout window on every restart; without a cap the log grows
+/// forever. 5 MiB is days of healthy stderr. Windows rename fails on an
+/// existing target, so the previous .old is dropped first.
+fn open_sidecar_log(app: &AppHandle) -> Option<std::fs::File> {
+    let dir = app.path().app_data_dir().ok()?.join("logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("zelari-sidecar.log");
+    const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+    if std::fs::metadata(&path)
+        .map(|m| m.len() > MAX_LOG_BYTES)
+        .unwrap_or(false)
+    {
+        let _ = std::fs::remove_file(dir.join("zelari-sidecar.log.old"));
+        let _ = std::fs::rename(&path, dir.join("zelari-sidecar.log.old"));
+    }
+    OpenOptions::new().create(true).append(true).open(path).ok()
 }
 
 /// Supervisor for one child generation: handshake on the first line, then
