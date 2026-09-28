@@ -1,309 +1,419 @@
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Zelari Code — CLI da terminale con AI Council. Landing moderna stile terminal/code; installazione npm, comandi slash e orchestrazione multi-agente." />
-  <title>Zelari Code — Terminal AI Council CLI</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --text: #e6edf3;
-      --muted: #8b949e;
-      --accent: #3fb950;
-      --accent-dim: #238636;
-      --cyan: #58a6ff;
-      --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      --radius: 10px;
-    }
-    *, *::before, *::after { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    @media (prefers-reduced-motion: reduce) {
-      html { scroll-behavior: auto; }
-      .cursor-blink { animation: none !important; opacity: 1; }
-      .reveal { animation: none !important; opacity: 1; transform: none !important; }
-    }
-    body {
-      margin: 0;
-      font-family: var(--font-mono);
-      font-size: 15px;
-      line-height: 1.55;
-      color: var(--text);
-      background: var(--bg);
-      background-image:
-        linear-gradient(rgba(48, 54, 61, 0.35) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(48, 54, 61, 0.35) 1px, transparent 1px);
-      background-size: 24px 24px;
-    }
-    a { color: var(--cyan); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .skip {
-      position: absolute;
-      left: -9999px;
-      top: 0;
-      background: var(--accent);
-      color: #000;
-      padding: 0.5rem 1rem;
-      z-index: 100;
-    }
-    .skip:focus { left: 0.5rem; top: 0.5rem; }
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      background: rgba(13, 17, 23, 0.92);
-      border-bottom: 1px solid var(--border);
-      backdrop-filter: blur(8px);
-    }
-    .wrap { max-width: 960px; margin: 0 auto; padding: 0 1.25rem; }
-    nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem 1.25rem;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0.75rem 0;
-    }
-    .logo { color: var(--accent); font-weight: 700; letter-spacing: 0.04em; }
-    .logo span { color: var(--muted); font-weight: 400; }
-    nav ul {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1rem;
-    }
-    nav a { color: var(--muted); font-size: 0.9rem; }
-    nav a:hover { color: var(--text); }
-    main { padding: 2rem 0 4rem; }
-    .window {
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      background: var(--surface);
-      overflow: hidden;
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
-    }
-    .titlebar {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 0.75rem;
-      background: #010409;
-      border-bottom: 1px solid var(--border);
-    }
-    .dot { width: 10px; height: 10px; border-radius: 50%; }
-    .dot-r { background: #ff5f57; }
-    .dot-y { background: #febc2e; }
-    .dot-g { background: #28c840; }
-    .titlebar span { color: var(--muted); font-size: 0.8rem; margin-left: 0.5rem; }
-    .terminal-body { padding: 1.25rem 1.5rem 1.5rem; min-height: 12rem; }
-    .prompt { color: var(--accent); }
-    .line { margin: 0.35rem 0; word-break: break-word; }
-    .cursor-blink {
-      display: inline-block;
-      width: 0.55em;
-      height: 1em;
-      background: var(--accent);
-      vertical-align: text-bottom;
-      margin-left: 2px;
-      animation: blink 1s step-end infinite;
-    }
-    @keyframes blink { 50% { opacity: 0; } }
-    .hero-actions { margin-top: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem; }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 44px;
-      padding: 0.5rem 1.1rem;
-      border-radius: 6px;
-      font-family: inherit;
-      font-size: 0.9rem;
-      border: 1px solid var(--border);
-      cursor: pointer;
-      background: transparent;
-      color: var(--text);
-    }
-    .btn-primary {
-      background: var(--accent-dim);
-      border-color: var(--accent);
-      color: #fff;
-    }
-    .btn-primary:hover { filter: brightness(1.1); }
-    .btn:focus-visible, nav a:focus-visible, .skip:focus-visible {
-      outline: 2px solid var(--cyan);
-      outline-offset: 2px;
-    }
-    section { margin-top: 3rem; }
-    h2 {
-      font-size: 1.1rem;
-      color: var(--accent);
-      margin: 0 0 1rem;
-      font-weight: 600;
-    }
-    h2::before { content: "# "; color: var(--muted); }
-    .grid {
-      display: grid;
-      gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    }
-    .card {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem 1.1rem;
-      background: rgba(22, 27, 34, 0.6);
-    }
-    .card h3 { margin: 0 0 0.5rem; font-size: 0.95rem; color: var(--cyan); }
-    .card p { margin: 0; color: var(--muted); font-size: 0.88rem; }
-    pre {
-      margin: 0;
-      padding: 1rem 1.1rem;
-      background: #010409;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      overflow-x: auto;
-      font-size: 0.85rem;
-    }
-    code { color: var(--accent); }
-    .cmd-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-    .cmd-table th, .cmd-table td {
-      text-align: left;
-      padding: 0.5rem 0.75rem;
-      border-bottom: 1px solid var(--border);
-    }
-    .cmd-table th { color: var(--muted); font-weight: 500; }
-    .reveal {
-      opacity: 0;
-      transform: translateY(8px);
-      animation: rise 0.6s ease forwards;
-    }
-    .reveal:nth-child(2) { animation-delay: 0.08s; }
-    .reveal:nth-child(3) { animation-delay: 0.16s; }
-    .reveal:nth-child(4) { animation-delay: 0.24s; }
-    @media (max-width: 480px) {
-      nav { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
-      nav ul { gap: 0.5rem; font-size: 0.82rem; }
-      nav a { font-size: 0.82rem; }
-    }
-    @keyframes rise {
-      to { opacity: 1; transform: translateY(0); }
-    }
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 2rem 0;
-      color: var(--muted);
-      font-size: 0.85rem;
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZELARI CODE — Tokens Into A Name (demoscene trailer)</title>
+<style>
+  html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}
+  #c{position:fixed;inset:0;width:100%;height:100%;display:block;background:#000}
+  #ov{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      background:#000;color:#e8f4ff;font:600 22px/1.4 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      letter-spacing:.35em;text-indent:.35em;cursor:pointer;user-select:none;z-index:10;text-align:center}
+  #ov small{display:block;margin-top:14px;font-size:12px;letter-spacing:.25em;color:#7fb7ff;font-weight:400}
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#000;color:#ff6b6b;
+      font:400 15px/1.6 Consolas,Menlo,monospace;padding:2em;text-align:center;z-index:30;white-space:pre-wrap}
+  #title{position:fixed;inset:0;display:none;align-items:center;justify-content:flex-start;flex-direction:column;
+      padding-top:9vh;z-index:5;pointer-events:none;text-align:center;
+      font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  #title h1{margin:0;color:#fff;font-weight:800;font-size:min(9vw,84px);letter-spacing:.18em;text-indent:.18em}
+  #title p{margin:14px 0 0;color:#9fd8ff;font-weight:400;font-size:min(3.4vw,17px);letter-spacing:.42em;text-indent:.42em}
+  #title .rule{width:min(50vw,340px);height:2px;background:#9fd8ff;margin:22px auto 0;opacity:.8}
+</style>
 </head>
 <body>
-  <a class="skip" href="#main">Salta al contenuto</a>
-  <header>
-    <div class="wrap">
-      <nav aria-label="Primary">
-        <div class="logo">zelari<span>-code</span></div>
-        <ul>
-          <li><a href="#features">features</a></li>
-          <li><a href="#install">install</a></li>
-          <li><a href="#commands">commands</a></li>
-          <li><a href="./docs/GUIDA.md">guida (IT)</a></li>
-        </ul>
-      </nav>
-    </div>
-  </header>
-  <main id="main" class="wrap">
-    <div class="window" role="region" aria-label="Terminal preview">
-      <div class="titlebar" aria-hidden="true">
-        <span class="dot dot-r"></span>
-        <span class="dot dot-y"></span>
-        <span class="dot dot-g"></span>
-        <span>zelari-code — bash — 80×24</span>
-      </div>
-      <div class="terminal-body">
-        <p class="line"><span class="prompt">$</span> cat README.tagline</p>
-        <p class="line">AI Council coding agent CLI — multi-agent orchestration in your terminal.</p>
-        <p class="line" style="color: var(--muted); font-size: 0.9rem;">Landing per <strong>zelari-code</strong>: un solo <code>index.html</code>, stile terminale moderno.</p>
-        <p class="line"><span class="prompt">$</span> <span id="typeout" aria-live="polite"></span><span class="cursor-blink" aria-hidden="true"></span></p>
-        <div class="hero-actions">
-          <a class="btn btn-primary" href="#install">npm install -g zelari-code</a>
-          <a class="btn" href="#commands">/council &amp; /zelari</a>
-        </div>
-      </div>
-    </div>
+<canvas id="c"></canvas>
+<div id="title"><h1>ZELARI CODE</h1><div class="rule"></div><p>TOKENS &rarr; GEOMETRY &rarr; MUSIC &rarr; A NAME</p></div>
+<div id="ov">CLICK / SOUND ON<small>45s &middot; WEBGL2 + WEB AUDIO &middot; HEADPHONES RECOMMENDED</small></div>
+<div id="err"></div>
+<script>
+"use strict";
+/* STORYBOARD (Theme D: Tokens -> geometry -> music -> a name), 128 BPM, 45.0s
+   Every cut sits on a bar line (1 bar = 4 beats = 1.875s at 128 BPM).
+   bar  0   0.00- 3.75  COLD OPEN: black void, one breathing token-cube, sub drone, almost silent.
+   bar  2   3.75-11.25  ESTABLISH: camera pulls back, token field 5x5 on dark grid floor, kick+hat enter.
+   bar  6  11.25-18.75  TRANSFORM: tokens lift into 12-piece orbit ring + central capsule column, bass mutates, lead motif.
+   bar 10  18.75-26.25  PEAK: token-city downtown, towers + emissive windows, riser 16.875-18.75, full drums.
+   bar 14  26.25-33.75  COLLAPSE: crash on the cut, city falls into black-sphere singularity + accretion torus, drums strip.
+   bar 18  33.75-41.25  RESOLVE: singularity blooms into one crystal monolith on mirror floor, pad, sparse lead echo.
+   bar 22  41.25-45.00  TITLE: hard cut to locked wide shot, DOM title card, final hit at 41.25 + tail, iris to black.
+*/
+const DUR = 45, BPM = 128, BEAT = 60/BPM, BAR = BEAT*4;
+const SCENES = [0, 2*BAR, 6*BAR, 10*BAR, 14*BAR, 18*BAR, 22*BAR, DUR]; // [0,3.75,11.25,18.75,26.25,33.75,41.25,45]
+function sceneAt(t){ for(let i=SCENES.length-2;i>=0;i--) if(t>=SCENES[i]) return {s:i, local:t-SCENES[i]}; return {s:0,local:t}; }
 
-    <section id="features" aria-labelledby="features-heading">
-      <h2 id="features-heading">features</h2>
-      <div class="grid">
-        <article class="card reveal">
-          <h3>Multi-agent council</h3>
-          <p>Six roles — Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero — with feedback loops and promotion to skills.</p>
-        </article>
-        <article class="card reveal">
-          <h3>Zelari-mode missions</h3>
-          <p>Autonomous multi-run council until your MVP slice hits <code>completion.ok</code> or the iteration budget ends.</p>
-        </article>
-        <article class="card reveal">
-          <h3>Rich TUI + tools</h3>
-          <p>Ink + React chat, git sidebar, filesystem/shell/grep/web tools, 23+ skills, MCP via <code>.zelari/</code> workspace.</p>
-        </article>
-        <article class="card reveal">
-          <h3>Provider-agnostic</h3>
-          <p>OpenAI-compatible APIs, xAI Grok OAuth, GLM/Z.AI — failover, headless CI, and <code>/update</code> self-update.</p>
-        </article>
-      </div>
-    </section>
+const canvas = document.getElementById('c');
+const ov = document.getElementById('ov');
+const errBox = document.getElementById('err');
+const titleEl = document.getElementById('title');
+function fail(msg){ errBox.style.display='flex'; errBox.textContent='WEBGL2 UNAVAILABLE\n\n'+msg+'\n\nBlack screen: shader cannot run on this browser.'; }
 
-    <section id="install" aria-labelledby="install-heading">
-      <h2 id="install-heading">install</h2>
-      <p class="line" style="color: var(--muted); margin-bottom: 1rem;">Requires <strong>Node.js ≥ 20</strong>. MIT © <a href="https://anathema-studio.com/">Anathema Studio</a>.</p>
-      <pre><code>npm install -g zelari-code
-zelari-code</code></pre>
-      <p class="line" style="margin-top: 1rem; color: var(--muted); font-size: 0.88rem;">
-        Headless: <code>zelari-code --headless --task "…" --council --output json</code>
-      </p>
-    </section>
+const VS = `#version 300 es
+layout(location=0) in vec2 aPos;
+out vec2 vUv;
+void main(){ vUv = aPos*0.5+0.5; gl_Position = vec4(aPos,0.0,1.0); }`;
 
-    <section id="commands" aria-labelledby="commands-heading">
-      <h2 id="commands-heading">commands</h2>
-      <table class="cmd-table">
-        <thead>
-          <tr><th scope="col">Slash</th><th scope="col">Description</th></tr>
-        </thead>
-        <tbody>
-          <tr><td><code>/council &lt;input&gt;</code></td><td>Run the 6-member council pipeline</td></tr>
-          <tr><td><code>/zelari &lt;input&gt;</code></td><td>Autonomous mission until MVP slice completes</td></tr>
-          <tr><td><code>/skill &lt;id&gt;</code></td><td>Invoke a coding skill (built-in + SKILL.md)</td></tr>
-          <tr><td><code>/workspace</code></td><td>List <code>.zelari/</code> artifacts and sync AGENTS.MD</td></tr>
-          <tr><td><code>/update</code></td><td>Check or install CLI updates from npm</td></tr>
-        </tbody>
-      </table>
-      <p class="line" style="margin-top: 1rem; color: var(--muted);">TUI: <kbd>shift</kbd>+<kbd>tab</kbd> cycles agent → council → zelari mode.</p>
-    </section>
-  </main>
-  <footer class="wrap">
-    <p>Zelari Code · <a href="https://anathema-studio.com/zelari-code">Product</a> · <a href="https://github.com/N-THEM-Studio/zelari-code">GitHub</a> · <a href="./README.md">README</a> · <a href="./docs/GUIDA.md">Guida (IT)</a> · <a href="https://www.npmjs.com/package/zelari-code">npm</a></p>
-  </footer>
-  <script>
-(function () {
-  var text = "/zelari \"ship my MVP\"";
-  var el = document.getElementById("typeout");
-  if (!el) return;
-  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (reduced) { el.textContent = text; return; }
-  var i = 0;
-  function tick() {
-    if (i <= text.length) {
-      el.textContent = text.slice(0, i);
-      i++;
-      setTimeout(tick, i < 6 ? 120 : 45);
-    }
+const FS = `#version 300 es
+precision highp float;
+precision highp int;
+uniform vec2 uRes; uniform float uTime,uBeat,uScene,uLocal,uFade;
+in vec2 vUv; out vec4 O;
+#define PI 3.14159265
+mat2 rot(float a){ float c=cos(a),s=sin(a); return mat2(c,-s,s,c); }
+float hash11(float p){ p=fract(p*443.8975); p*=p+19.19; return fract(p*p); }
+float hash21(vec2 p){ vec3 q=fract(vec3(p.xyx)*0.1031); q+=dot(q,q.yzx+33.33); return fract((q.x+q.y)*q.z); }
+float vnoise(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.-2.*f);
+  float a=hash21(i),b=hash21(i+vec2(1,0)),c=hash21(i+vec2(0,1)),d=hash21(i+vec2(1,1));
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y); }
+float fbm(vec2 p){ float v=0.,a=.5; for(int i=0;i<4;i++){ v+=a*vnoise(p); p*=2.03; a*=.5; } return v; }
+float sdSphere(vec3 p,float r){ return length(p)-r; }
+float sdBox(vec3 p,vec3 b){ vec3 q=abs(p)-b; return length(max(q,0.))+min(max(q.x,max(q.y,q.z)),0.); }
+float sdRoundBox(vec3 p,vec3 b,float r){ vec3 q=abs(p)-b; return length(max(q,0.))+min(max(q.x,max(q.y,q.z)),0.)-r; }
+float sdCapsule(vec3 p,vec3 a,vec3 b,float r){ vec3 pa=p-a,ba=b-a; float h=clamp(dot(pa,ba)/dot(ba,ba),0.,1.); return length(pa-ba*h)-r; }
+float sdTorus(vec3 p,vec2 t){ vec2 q=vec2(length(p.xz)-t.x,p.y); return length(q)-t.y; }
+// cheap octahedron: (|x|+|y|+|z|-s)/sqrt(3) is a conservative LOWER bound of the true distance,
+// so the raymarcher never overshoots. Keep the divide for safety.
+float sdOcta(vec3 p,float s){ p=abs(p); return (p.x+p.y+p.z-s)*0.57735027; }
+float smin(float a,float b,float k){ float h=clamp(.5+.5*(b-a)/k,0.,1.); return mix(b,a,h)-k*h*(1.-h); }
+float smax(float a,float b,float k){ return -smin(-a,-b,k); }
+
+// ---- scene maps: vec2(dist, mat)  0 floor/metal 1 token-metal 2 emissive 3 dielectric 4 city ----
+vec2 map0(vec3 p){
+  float t=uTime;
+  vec3 rp=p-vec3(0.,0.6,0.); rp.xz=rot(t*.25)*rp.xz; rp.xy=rot(t*.17)*rp.xy;
+  float d1=sdRoundBox(rp,vec3(.34),.09);
+  float d2=p.y+1.2;
+  if(d1<d2) return vec2(d1,2.); return vec2(d2,0.);
+}
+vec2 map1(vec3 p){
+  float t=uTime; float pulse=1.-uBeat;
+  vec3 rp=vec3(mod(p.x+4.,2.)-1.,p.y,mod(p.z+4.,2.)-1.);
+  float h=.28+.22*sin(t*2.+floor((p.x+4.)/2.)*1.7+floor((p.z+4.)/2.)*2.3)+.12*pulse;
+  float fieldMask=1.-smoothstep(5.0,5.6,length(p.xz)); // finite plaza: camera orbit (r=5.2) stays outside
+  float d1=sdBox(rp-vec3(0.,-1.+h+.28,0.),vec3(.24,h+.28,.24));
+  d1=mix(1e5,d1,fieldMask);
+  float d2=p.y+1.0;
+  vec2 a=vec2(d1,1.),b=vec2(d2,0.);
+  float glow=sdBox(rp-vec3(0.,-1.+2.*h+.6,0.),vec3(.06,.06,.06));
+  vec2 g=vec2(glow,2.);
+  vec2 m=(a.x<b.x)?a:b;
+  m=(g.x<m.x-0.02)?g:m;
+  return m;
+}
+vec2 map2(vec3 p){
+  float t=uTime+uLocal; float best=1e5; float mat=1.;
+  for(int i=0;i<12;i++){
+    float fi=float(i)*6.2831/12.;
+    float r=2.3+.12*sin(t*1.4+fi*3.);
+    vec3 c=vec3(cos(fi+t*.5)*r, .4+1.1*sin(t*.8+fi*2.)+uLocal*.02, sin(fi+t*.5)*r);
+    float d=sdRoundBox(p-c,vec3(.22),.06);
+    if(d<best){ best=d; mat=(i%3==0)?2.:1.; }
   }
-  tick();
-})();
-  </script>
+  float col=sdCapsule(p,vec3(0.,-1.,0.),vec3(0.,2.6,0.),.30+.03*sin(t*3.));
+  float fl=p.y+1.2;
+  vec2 m=vec2(best,mat);
+  if(col<m.x) m=vec2(col,3.);
+  if(fl<m.x) m=vec2(fl,0.);
+  return m;
+}
+vec2 map3(vec3 p){
+  vec2 cell=floor(p.xz/2.);
+  vec2 fr=vec2(mod(p.x+8.,2.)-1.,mod(p.z+8.,2.)-1.);
+  float hh=0.8+1.6*hash21(cell); // tops <= 4.0: scene-3 flight line stays above
+  float cityMask=1.-smoothstep(7.0,7.5,length(p.xz)); // finite downtown: camera stays outside
+  float d1=sdBox(vec3(fr.x,p.y-(-1.+hh),fr.y),vec3(.8,hh,.8));
+  d1=mix(1e5,d1,cityMask);
+  float win=step(.60,hash21(floor(p.xz*4.)+floor(p.y*6.)*.37));
+  float d2=p.y+1.0;
+  vec2 m=vec2(d1,(win>.5&&p.y>-.2)?2.:4.);
+  if(d2<m.x) m=vec2(d2,0.);
+  float sp=sdSphere(p-vec3(1.7,2.4+sin(uTime*2.)*.3,.9),.25); // small off-axis beacon: does not fight the skyline
+  if(sp<m.x) m=vec2(sp,2.);
+  return m;
+}
+// shared singularity radius at the current local time: one source for map4 and shade()
+float s4R(){ float k=clamp(uLocal/8.,0.,1.); return mix(2.6,.55,k*k); }
+vec2 map4(vec3 p){
+  float k=clamp(uLocal/8.,0.,1.);
+  float R=s4R();
+  float hole=sdSphere(p,R);
+  float ring=sdTorus(p-vec3(0.,0.2,0.),vec2(R+1.1,.10));
+  float fl=p.y+1.2;
+  float debris=sdBox(vec3(mod(p.x+3.,1.5)-.75,p.y-(0.5+k*2.2),mod(p.z+3.,1.5)-.75),vec3(.16));
+  vec2 m=vec2(hole,3.);
+  if(ring<m.x) m=vec2(ring,2.);
+  if(debris<m.x) m=vec2(debris,1.);   // nearest wins: no material override halo
+  if(fl<m.x) m=vec2(fl,0.);
+  return m;
+}
+vec2 map5(vec3 p){
+  float t=uTime;
+  vec3 rp=p-vec3(0.,.7,0.); rp.y-=sin(t*.6)*.08;
+  float d1=sdOcta(rp,.95);
+  float d2=sdOcta(rp,.57); d1=smax(d1,-d2,.25);  // hollow shell = same space, smaller size.
+  // (scaling the coord, rp*0.6, made the inner octa LARGER than the outer one: smax stayed
+  //  positive everywhere and the marcher never hit anything -> empty finale.)
+  float fl=p.y+1.2;
+  vec2 m=vec2(d1,3.);
+  if(fl<m.x) m=vec2(fl,0.);
+  float orb=sdSphere(p-vec3(sin(t*.7)*2.2,.4+sin(t)*.3,cos(t*.5)*2.2),.07);
+  if(orb<m.x) m=vec2(orb,2.);
+  return m;
+}
+vec2 map(vec3 p){
+  int s=clamp(int(uScene+.5),0,5);
+  if(s<=0) return map0(p);
+  if(s==1) return map1(p);
+  if(s==2) return map2(p);
+  if(s==3) return map3(p);
+  if(s==4) return map4(p);
+  return map5(p);
+}
+vec3 calcN(vec3 p){ vec2 e=vec2(.0015,0.);
+  return normalize(vec3(map(p+e.xyy).x-map(p-e.xyy).x,
+                       map(p+e.yxy).x-map(p-e.yxy).x,
+                       map(p+e.yyx).x-map(p-e.yyx).x)); }
+float softShadow(vec3 ro,vec3 rd,float tmin,float tmax){
+  float res=1.,t=tmin;
+  for(int i=0;i<16;i++){ float h=map(ro+rd*t).x; res=min(res,8.*h/t); t+=clamp(h,.02,.3); if(res<.005||t>tmax) break; }
+  return clamp(res,0.,1.);
+}
+float calcAO(vec3 p,vec3 n){
+  float o=0.,s=1.;
+  for(int i=1;i<=3;i++){ float h=.03*float(i); o+=(float(i)*h-map(p+n*h).x)*s; s*=.7; }
+  return clamp(1.-2.5*o,0.,1.);
+}
+void camPath(out vec3 ro,out vec3 ta){
+  int s=clamp(int(uScene+.5),0,6); float L=uLocal,t=uTime;
+  if(s==0){ ro=vec3(0.,.7,3.4-L*.15); ta=vec3(0.,.5,0.); }
+  else if(s==1){ float a=.35+L*.12; ro=vec3(sin(a)*5.2,.9+L*.25,cos(a)*5.2); ta=vec3(0.,.2,0.); }
+  else if(s==2){ float a=L*.35; ro=vec3(sin(a)*5.6,2.2+L*.12,cos(a)*5.6); ta=vec3(0.,.7,0.); }
+  else if(s==3){ ro=vec3(L*.35-2.0,5.2+sin(L)*.2,5.0-L*.25); ta=vec3(0.,.8,0.); }
+  else if(s==4){ float a=2.2+L*.22; ro=vec3(sin(a)*4.4,1.6+L*.1,cos(a)*4.4); ta=vec3(0.,.3,0.); }
+  else if(s==5){ float a=3.0+min(L,8.)*.055; ro=vec3(sin(a)*4.8,1.3,cos(a)*4.8); ta=vec3(0.,.72,0.); } // resolve: full silhouette
+  else { float a=3.44+min(L,3.75)*.02; ro=vec3(sin(a)*6.2,2.6,cos(a)*6.2); ta=vec3(0.,1.9,0.); } // title: subject drops, top of frame free for the card
+}
+vec3 shade(vec3 ro,vec3 rd,float t,float mat,vec3 p,vec3 n){
+  vec3 key=normalize(vec3(.6,.8,.4)), fill=normalize(vec3(-.7,.2,-.5));
+  vec3 V=-rd;
+  vec3 alb;
+  float rough=.5, emis=0.;
+  if(mat<.5){ alb=vec3(.05,.07,.10); rough=.35; if(uScene>=4.5){rough=.32;} } // mirror floor must not steal the finale
+  else if(mat<1.5){ alb=vec3(.35,.45,.60); rough=.25; }
+  else if(mat<2.5){ alb=vec3(.2,.9,1.); emis=1.8; }
+  else if(mat<3.5){ alb=vec3(.75,.85,1.); rough=.1; }
+  else { alb=vec3(.22,.20,.28); rough=.62; }   // 4 city: own albedo, reads apart from the floor at 64px
+  float dif=max(dot(n,key),0.);
+  float sh=softShadow(p+n*.02,key,0.05,8.);
+  float ao=calcAO(p,n);
+  vec3 H=normalize(key+V);
+  float spec=pow(max(dot(n,H),0.),mix(120.,16.,rough))*(rough<.4?1.:.25);
+  float fres=pow(1.-max(dot(n,V),0.),3.);
+  vec3 col=alb*(0.12+0.9*dif*sh)*ao;
+  col+=vec3(1.,.95,.85)*spec*sh;
+  float fk=(mat>2.5&&mat<3.5)?2.0:((mat>=3.5)?.7:.35);
+  col+=alb*fres*fk;
+  col+=vec3(.25,.5,1.)*max(dot(n,fill)*.5+.5,0.)*.12*ao;
+  // cold rim where the surface turns away from the key: keeps the dielectric column
+  // and the crystal frame readable at 64px
+  col+=vec3(.45,.72,1.)*pow(1.-max(dot(n,key),0.),4.)*.30*ao;
+  // crystal finale: emissive edge so the monolith reads as a silhouette, not as a wall of glass
+  if(uScene>=4.5&&mat>2.5&&mat<3.5) col+=vec3(.35,.72,1.)*pow(1.-max(dot(n,V),0.),2.2)*.85;
+  col+=alb*emis*(1.2+.8*(1.-uBeat));
+  // colored fog by scene
+  vec3 fogC=vec3(.02,.04,.08);
+  int s=clamp(int(uScene+.5),0,5);
+  if(s==2) fogC=vec3(.03,.06,.12);
+  else if(s==3) fogC=vec3(.06,.05,.12);
+  else if(s==4) fogC=vec3(.10,.02,.06);
+  else if(s>=5) fogC=vec3(.03,.08,.10);
+  float f=1.-exp(-t*t*.028);
+  if(s>=5) f*=.35; // finale: keep the monolith contrast against the fog
+  // void inside the singularity: geometric test on the HIT POINT (map(p)<0 never fires here,
+  // the marcher stops while the field is still slightly positive)
+  if(s==4&&length(p)<s4R()*1.02) col=vec3(.02,.05,.09)*pow(1.-max(dot(n,V),0.),3.);
+  col=mix(col,fogC,f);
+  return col;
+}
+void main(){
+  vec2 uv=(2.*gl_FragCoord.xy-uRes)/uRes.y;
+  vec3 ro,ta; camPath(ro,ta);
+  vec3 fw=normalize(ta-ro), rt=normalize(cross(fw,vec3(0,1,0))), up=cross(rt,fw);
+  vec3 rd=normalize(uv.x*rt+uv.y*up+1.6*fw);
+  float t=0.001,mat=-1.; vec3 p=ro; bool hit=false;
+  for(int i=0;i<80;i++){
+    p=ro+rd*t; vec2 h=map(p);
+    if(h.x<.0015*t+.0008){ mat=h.y; hit=true; break; }
+    t+=h.x*.9; if(t>26.) break;
+  }
+  vec3 col=vec3(0.);
+  if(hit){ vec3 n=calcN(p); col=shade(ro,rd,t,mat,p,n); }
+  else { float g=fbm(uv*2.+uTime*.05); col=mix(vec3(.008,.012,.03),vec3(.03,.05,.10),g*.5);
+    col+=vec3(.2,.6,1.)*pow(max(0.,1.-abs(uv.y+.2)*1.4),6.)*.12; }
+  // rim flash on crash into scene 4
+  int s=clamp(int(uScene+.5),0,5);
+  if(s==4&&uLocal<.6) col+=vec3(1.,.9,.8)*(0.6-uLocal)*0.55;
+  if(s==0) col*=.75+.15*sin(uTime*2.);
+  // filmic + vignette + grain
+  col=col/(1.+col*.55); col=pow(max(col,0.),vec3(.85));
+  vec2 q=vUv-.5; col*=1.-dot(q,q)*.55;
+  col+=(hash21(gl_FragCoord.xy+fract(uTime)*7.)-.5)*.03;
+  col*=clamp(uFade,0.,1.);
+  O=vec4(col,1.);
+}`;
+
+let gl=null, prog=null, uni={};
+let started=false, actx=null, bufSrc=null, startCtxT=0, startOff=0, raf=0;
+let demoT=0;
+
+function initGL(){
+  gl = canvas.getContext('webgl2',{antialias:false,alpha:false});
+  if(!gl){ fail('WebGL2 context is null. Use Chrome/Firefox with hardware acceleration.'); return false; }
+  function sh(type,src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){ fail((type===gl.VERTEX_SHADER?'Vertex':'Fragment')+' shader error:\n'+gl.getShaderInfoLog(s)); return null; } return s; }
+  const vs=sh(gl.VERTEX_SHADER,VS); if(!vs) return false;
+  const fs=sh(gl.FRAGMENT_SHADER,FS); if(!fs) return false;
+  prog=gl.createProgram(); gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ fail('Program link error:\n'+gl.getProgramInfoLog(prog)); return false; }
+  gl.useProgram(prog);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+  for(const n of ['uRes','uTime','uBeat','uScene','uLocal','uFade']) uni[n]=gl.getUniformLocation(prog,n);
+  return true;
+}
+function resize(){ const d=Math.min(devicePixelRatio||1,1.5);
+  canvas.width=Math.floor(innerWidth*d); canvas.height=Math.floor(innerHeight*d); }
+
+/* ---------- AUDIO: pre-render whole 45s stereo buffer on click ---------- */
+function renderSound(ctx){
+  const sr=ctx.sampleRate, N=Math.floor(DUR*sr);
+  const L=new Float32Array(N), R=new Float32Array(N);
+  const noise=new Float32Array(N); for(let i=0;i<N;i++) noise[i]=Math.random()*2-1;
+  function add(dst,t,sig){ const o=Math.floor(t*sr); for(let i=0;i<sig.length;i++){ const k=o+i; if(k>=0&&k<N) dst[k]+=sig[i]; } }
+  function env(n,a,r){ const e=new Float32Array(n); for(let i=0;i<n;i++){ const t=i/sr; e[i]=Math.min(1,t/Math.max(a,1e-4))*Math.exp(-t/Math.max(r,1e-3)); } return e; }
+  function kick(){ const n=Math.floor(.28*sr),s=new Float32Array(n),e=env(n,.005,.09);
+    let ph=0; for(let i=0;i<n;i++){ const t=i/sr,f=150*Math.exp(-t*28)+42; ph+=2*Math.PI*f/sr; s[i]=Math.sin(ph)*e[i]*1.1; } return s; }
+  function snare(){ const n=Math.floor(.22*sr),s=new Float32Array(n),e=env(n,.003,.07);
+    for(let i=0;i<n;i++) s[i]=(noise[(i*7)%N]*.7+Math.sin(2*Math.PI*190*i/sr)*.5)*e[i]*.8; return s; }
+  function hat(open){ const n=Math.floor((open?.16:.045)*sr),s=new Float32Array(n),e=env(n,.005,open?.03:.012);
+    let lp=0; for(let i=0;i<n;i++){ const x=noise[(i*13)%N]; lp+=.35*(x-lp); s[i]=(x-lp)*e[i]*.5; } return s; }
+  function bassNote(f,dur,cut){ const n=Math.floor(dur*sr),s=new Float32Array(n);
+    let lp=0; const k=Math.min(.95,Math.max(.02,cut));
+    for(let i=0;i<n;i++){ const t=i/sr; const sq=Math.sign(Math.sin(2*Math.PI*f*t))*.6+Math.sin(2*Math.PI*f*t)*.4;
+      lp+=k*(sq-lp); const a=Math.min(1,t/.008)*Math.exp(-t/(dur*.7)); s[i]=lp*a*.55; } return s; }
+  function pluck(f,dur){ const n=Math.floor(dur*sr),s=new Float32Array(n);
+    for(let i=0;i<n;i++){ const t=i/sr; s[i]=(Math.sin(2*Math.PI*f*t)+.4*Math.sin(4*Math.PI*f*t))*.4*Math.exp(-t*4)*Math.min(1,t/.008); } return s; }
+  function crash(dur){ const n=Math.floor(dur*sr),s=new Float32Array(n); let lp=0;
+    for(let i=0;i<n;i++){ const t=i/sr,x=noise[(i*3)%N]; lp+=.08*(x-lp); s[i]=(x-lp*.4)*Math.exp(-t*1.1)*.7*Math.min(1,t/.005); } return s; }
+  const K=kick(),S=snare(),H=hat(false),HO=hat(true);
+  const roots=[55,43.65,65.41,49]; // A1 F1 C2 G1
+  const nb=Math.floor(DUR/BEAT);
+  for(let b=0;b<nb;b++){
+    const t=b*BEAT, bar=Math.floor(b/4), pos=b%4, inBar=b%16;
+    const sc=sceneAt(t).s;
+    if(sc>=1) { add(L,t,K); add(R,t,K); }
+    if(sc>=1&&(pos===1||pos===3)){ add(L,t,S); add(R,t,S); }
+    if(sc>=1){ const h=(sc>=3&&inBar%2===1)?HO:H; const ht=t+(inBar%2?BEAT/2:0);
+      if(ht<DUR-.2){ add(L,ht,h); add(R,ht+.004,h); } }   // +4ms on R: stereo width, no pop
+    if(sc>=2&&sc!==4){ const f=roots[Math.floor(bar/2)%4]*(inBar%4===3?2:1);
+      const cut=sc>=3?.5:.18; const bn=bassNote(f,BEAT*.95,cut); add(L,t,bn); add(R,t,bn); }
+    else if(sc===1&&pos%2===0){ const bn=bassNote(roots[Math.floor(bar/2)%4]/2,BEAT*.9,.12); add(L,t,bn); add(R,t,bn); }
+  }
+  // lead motif (A C D E G) in scenes 2 + 5 — every entry on a beat
+  const motif=[440,523.25,587.33,659.25,783.99,659.25,587.33,523.25];
+  const LEADS=[25*BEAT,28*BEAT,31*BEAT,34*BEAT, 74*BEAT,77*BEAT,80*BEAT];
+  LEADS.forEach((t,i)=>{ const p=pluck(motif[i%motif.length],.9); add(L,t,p); add(R,t,p); });
+  // echo taps for lead
+  [25*BEAT,28*BEAT,74*BEAT,77*BEAT].forEach((t,i)=>{ const p=pluck(motif[i%motif.length]/2,.7);
+    const e1=new Float32Array(p.length); for(let j=0;j<p.length;j++) e1[j]=p[j]*.35;
+    add(L,t+BEAT/2,e1); add(R,t+BEAT/2,e1); });
+  // riser: lands exactly on the scene-3 cut (10 bars)
+  { const t0=36*BEAT,t1=40*BEAT,n=Math.floor((t1-t0)*sr),s=new Float32Array(n); let lp=0;
+    for(let i=0;i<n;i++){ const k=i/n,t=t0+i/sr,x=noise[(i*5)%N]; lp+=(.02+.5*k)*(x-lp); s[i]=lp*k*1.2; }
+    add(L,t0,s); add(R,t0,s); }
+  // crash + impact thump on the collapse cut (14 bars)
+  { const c=crash(3.2); add(L,56*BEAT,c); add(R,56*BEAT+.009,c); const k2=kick(); add(L,56*BEAT,k2); add(R,56*BEAT,k2); }
+  // final hit on the title cut (22 bars)
+  { const c=crash(3.0); add(L,88*BEAT,c); add(R,88*BEAT+.009,c); const k3=kick(); add(L,88*BEAT,k3); add(R,88*BEAT,k3);
+    const p=pluck(220,2.5); add(L,88*BEAT,p); add(R,88*BEAT,p); }
+  // cold-open sub drone (scene 0) + title pad (scenes 5-6). Both envelopes reach zero inside their gate.
+  for(let i=0;i<N;i++){ const t=i/sr; let v=0;
+    if(t<SCENES[1]) v+=Math.sin(2*Math.PI*55*t)*.12*(1-t/SCENES[1]);
+    if(t>=SCENES[5]){ const ch=[220,261.63,329.63]; let s=0; for(const f of ch) s+=Math.sign(Math.sin(2*Math.PI*f*t))*.05;
+      const a=Math.min(1,(t-SCENES[5])/2)*Math.min(1,(DUR-t)/1.5); v+=s*a; }
+    L[i]+=v; R[i]+=v*.9; }
+  // master: tanh limiter + edge fades (no pops)
+  const fN=Math.floor(.05*sr);
+  for(let i=0;i<N;i++){ L[i]=Math.tanh(L[i]*1.1)*.85; R[i]=Math.tanh(R[i]*1.1)*.85; }
+  for(let i=0;i<fN;i++){ const g=i/fN; L[i]*=g; R[i]*=g; }
+  const oN=Math.floor(.6*sr);
+  for(let i=0;i<oN;i++){ const g=i/oN; L[N-1-i]*=g; R[N-1-i]*=g; }
+  const buf=ctx.createBuffer(2,N,sr);
+  buf.getChannelData(0).set(L); buf.getChannelData(1).set(R);
+  return buf;
+}
+
+function frame(now){
+  let t;
+  if(actx&&bufSrc){ t=Math.max(0,startOff+(actx.currentTime-startCtxT)); if(t>=DUR){ t=DUR; } }
+  else t=Math.max(0,(now/1000)%DUR);
+  demoT=t;
+  const {s,local}=sceneAt(Math.min(t,DUR-0.001));
+  // 0.25s dip-to-black on cuts + 0.5s iris out at the end
+  let fade=1;
+  for(const c of SCENES){ const d=Math.abs(t-c); if(d<.25&&c>0&&c<DUR) fade=Math.min(fade,d/.25); }
+  fade=Math.min(fade,Math.max(0,(DUR-t)/.5));
+  fade=Math.max(fade,0.);
+  if(gl){
+    gl.viewport(0,0,canvas.width,canvas.height);
+    gl.useProgram(prog);
+    gl.uniform2f(uni.uRes,canvas.width,canvas.height);
+    gl.uniform1f(uni.uTime,t);
+    gl.uniform1f(uni.uBeat,(t*BPM/60)%1);
+    gl.uniform1f(uni.uScene,s);
+    gl.uniform1f(uni.uLocal,local);
+    gl.uniform1f(uni.uFade,fade);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+  }
+  if(t>=SCENES[6]&&t<DUR-.02){ titleEl.style.display='flex'; titleEl.style.opacity=String(Math.min(1,(DUR-t)/.6)); }
+  else titleEl.style.display='none';
+  if(t<DUR||!bufSrc) raf=requestAnimationFrame(frame); else raf=0;
+}
+window.__demo={ get t(){return demoT;}, duration:DUR,
+  seek(t){ t=Math.max(0,Math.min(DUR-0.01,t));
+    if(actx&&bufSrc){ const old=bufSrc; try{old.onended=null;old.stop();old.disconnect();}catch(e){}
+      startOff=t; startCtxT=actx.currentTime;
+      bufSrc=actx.createBufferSource(); bufSrc.buffer=window.__buf; bufSrc.connect(actx.destination); bufSrc.start(0,t); }
+    demoT=t;
+    if(!raf) raf=requestAnimationFrame(frame); },
+  frame(n){ this.seek(n/60); } };
+
+ov.addEventListener('click',()=>{
+  if(started) return; started=true;
+  cancelAnimationFrame(raf);
+  if(!glReady && !initGL()) return;
+  resize(); addEventListener('resize',resize);
+  ov.textContent='RENDERING AUDIO…';
+  setTimeout(()=>{
+    try{
+      actx=new (window.AudioContext||window.webkitAudioContext)();
+      if(actx.state==='suspended') actx.resume();
+      const buf=renderSound(actx); window.__buf=buf;
+      bufSrc=actx.createBufferSource(); bufSrc.buffer=buf; bufSrc.connect(actx.destination);
+      ov.style.display='none';
+      startCtxT=actx.currentTime+.05; startOff=0; bufSrc.start(startCtxT);
+      bufSrc.onended=()=>{ cancelAnimationFrame(raf); raf=0; };
+      raf=requestAnimationFrame(frame);
+    }catch(e){ fail('Audio init failed: '+(e&&e.message||e)); }
+  },30);
+});
+resize();
+let glReady=false;
+if(!window.WebGL2RenderingContext) fail('No WebGL2RenderingContext in this browser.');
+else { // compile check before click so file:// failures surface early (silent preview, no audio)
+  glReady=initGL(); if(glReady){ resize(); raf=requestAnimationFrame(frame); }
+}
+</script>
 </body>
 </html>
