@@ -5,6 +5,7 @@
  */
 import { useEffect, useState } from "react";
 import { loginOAuth, logoutOAuth, refreshOAuth, setApiKey } from "../../agentClient";
+import { renewGrokSession } from "../../grokSessionRenew";
 import type { DesktopProviderInfo } from "../../types";
 import { SettingHelp } from "../SettingHelp";
 import { formatExpiry } from "./modelUtils";
@@ -80,6 +81,13 @@ export function AuthCard({ provider, onRefresh }: AuthCardProps) {
 
   const doRefreshToken = () =>
     void run(async () => {
+      // Grok shares the chat-picker in-flight lock so two clicks cannot spawn
+      // two CLI refresh processes. Other providers keep the direct call.
+      if (id === "grok") {
+        const renewed = await renewGrokSession(onRefresh);
+        if (!renewed.ok) throw new Error(renewed.message);
+        return renewed.message;
+      }
       const r = await refreshOAuth({ provider: id });
       if (r.ok === false && r.error) throw new Error(r.error);
       await onRefresh();
@@ -106,6 +114,20 @@ export function AuthCard({ provider, onRefresh }: AuthCardProps) {
       await onRefresh();
       return `API key saved for ${r.provider ?? name} (${r.masked ?? "••••"}).`;
     });
+
+  if (id === "claudeCode" || provider.authKind === "cli") {
+    return (
+      <SettingsCard
+        title={`2 · Connect ${brand}`}
+        description="Zelari does not store the subscription token."
+      >
+        <p className="s-card-desc">
+          Zelari does not store the Claude Code subscription token. Run{" "}
+          <code>claude auth login</code> on the official Claude Code binary.
+        </p>
+      </SettingsCard>
+    );
+  }
 
   const status = signedInWithOauth ? (
     <StatusPill tone={expired ? "warn" : "ok"}>

@@ -24,6 +24,7 @@ import {
   setAppConfig,
   summarizeToolArgs,
 } from "./agentClient";
+import { renewGrokAfterChatPersist, renewGrokSession } from "./grokSessionRenew";
 import {
   applyAskUserSettled,
   applyPermissionSettled,
@@ -2985,7 +2986,20 @@ export default function App() {
     // SLICE4(model-sync): the provider switch carries its model to
     // provider.json, exactly like the Settings → Models & Providers picker.
     if (!(await persistChatModel(id, nextModel, "provider"))) return;
-    await refreshConfig();
+    // Silent Grok renew only — never a device-code login. Other providers
+    // just reload config, as before.
+    await renewGrokAfterChatPersist({
+      providerId: id,
+      hasRefreshToken: p?.hasRefreshToken,
+      refreshConfig,
+      setStatus: setStatusLine,
+    });
+  };
+
+  /** Same renew as a Grok pick. The native select does not re-fire when already on Grok. */
+  const renewGrokSilently = async () => {
+    const result = await renewGrokSession(() => refreshConfig());
+    setStatusLine(result.message);
   };
 
   const onModelChange = async (id: string) => {
@@ -4269,6 +4283,9 @@ export default function App() {
               model,
               disabled: running,
               onProviderChange,
+              onRenewGrokSession: () => {
+                void renewGrokSilently();
+              },
               onModelChange,
               onThinkingChange,
               onConfigRefresh: setConfig,
