@@ -5,6 +5,7 @@
  */
 import { useEffect, useState } from "react";
 import { setAppConfig } from "../../agentClient";
+import { renewGrokSession } from "../../grokSessionRenew";
 import type { DesktopConfig, DesktopProviderInfo } from "../../types";
 import { SettingHelp } from "../SettingHelp";
 import { AuthCard } from "./AuthCard";
@@ -35,6 +36,9 @@ const OTHER_MODEL = "__other__";
 const ENDPOINT_PROVIDERS = new Set(["openai-compatible", "custom"]);
 
 export function connectionPill(p: DesktopProviderInfo) {
+  if (p.authKind === "cli") {
+    return <StatusPill tone="neutral">Abbonamento · claude auth login</StatusPill>;
+  }
   if (p.hasKey && p.authKind === "oauth") {
     return p.expiresAt && p.expiresAt <= Date.now() ? (
       <StatusPill tone="warn">Sign-in expired</StatusPill>
@@ -73,15 +77,28 @@ export function ProviderSection({
   }, [activeId]);
 
   const switchProvider = (id: string) => {
-    if (busy || id === activeId) return;
+    if (busy) return;
     const p = providers.find((x) => x.id === id);
     if (!p) return;
+    const alreadyActive = id === activeId;
+    // Other providers keep the no-op re-click. Grok does not: a second click
+    // on the active card silently renews when a refresh token is already stored.
+    if (alreadyActive && (id !== "grok" || !p.hasRefreshToken)) return;
     const model = config?.modelByProvider[id] || p.defaultModel || p.models[0] || "";
     setPendingId(id);
     void run(async () => {
-      await setAppConfig({ provider: id, model });
-      await onRefresh();
-      onActiveProviderChange(id, model);
+      if (!alreadyActive) {
+        await setAppConfig({ provider: id, model });
+        await onRefresh();
+        onActiveProviderChange(id, model);
+      }
+      if (id === "grok" && p.hasRefreshToken) {
+        const renewed = await renewGrokSession(onRefresh);
+        if (!renewed.ok) throw new Error(renewed.message);
+        return alreadyActive
+          ? renewed.message
+          : `Now using ${p.displayName}. ${renewed.message}`;
+      }
       return `Now using ${p.displayName}`;
     }).finally(() => setPendingId(null));
   };

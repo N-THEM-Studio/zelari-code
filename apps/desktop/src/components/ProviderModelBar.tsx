@@ -13,6 +13,11 @@ interface Props {
   onThinkingChange: (spec: string) => void;
   onConfigRefresh?: (cfg: DesktopConfig) => void;
   onStatus?: (msg: string) => void;
+  /**
+   * Already-selected Grok does not re-fire the native select. Shown only when
+   * the current provider is grok and a refresh token is stored.
+   */
+  onRenewGrokSession?: () => void;
 }
 
 /** Per-provider cooldown so switching DeepSeek after MiniMax still discovers. */
@@ -47,6 +52,7 @@ export function ProviderModelBar({
   onThinkingChange,
   onConfigRefresh,
   onStatus,
+  onRenewGrokSession,
 }: Props) {
   const providers = config?.providers ?? [];
   const active = providers.find((p) => p.id === provider);
@@ -176,12 +182,23 @@ export function ProviderModelBar({
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.displayName}
-                {!p.hasKey ? " (no key)" : ""}
+                {!p.hasKey && p.authKind !== "cli" ? " (no key)" : ""}
               </option>
             ))}
           </select>
         </span>
       </div>
+      {provider === "grok" && active?.hasRefreshToken && onRenewGrokSession ? (
+        <button
+          type="button"
+          className="pmb-refresh-row"
+          disabled={disabled || undefined}
+          title="Extend the current session without signing in again"
+          onClick={() => void onRenewGrokSession()}
+        >
+          Renew session
+        </button>
+      ) : null}
 
       <div className="pmb-label">Model</div>
       <div

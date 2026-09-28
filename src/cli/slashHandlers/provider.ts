@@ -51,7 +51,7 @@ export interface ProviderSlashContext {
 }
 
 const UNKNOWN_PROVIDER_MSG =
-  (id: string) => `[provider] unknown: ${id}. Available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, custom`;
+  (id: string) => `[provider] unknown: ${id}. Available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, claudeCode, custom`;
 
 // ---------------------------------------------------------------------------
 // Interactive picker plumbing (v0.7.10) — /provider and /model with no args
@@ -106,7 +106,7 @@ export function handleProviderList(ctx: ProviderSlashContext): void {
   const epHint = customEp ? ` — custom endpoint: ${customEp}` : '';
   appendSystem(
     ctx.setMessages,
-    `[provider] current: ${list.displayName} (model: ${ctx.activeModel})${epHint} — available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, custom`,
+    `[provider] current: ${list.displayName} (model: ${ctx.activeModel})${epHint} — available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, claudeCode, custom`,
   );
 }
 
@@ -143,7 +143,9 @@ export function handleProviderPicker(ctx: ProviderSlashContext, openPicker?: Ope
     return {
       value: p.id,
       label: p.displayName,
-      hint: customEp ?? (model || undefined),
+      hint: p.id === 'claudeCode'
+        ? 'claude auth login — Zelari non salva il token'
+        : customEp ?? (model || undefined),
       current: p.id === ctx.activeProviderSpec.id,
     };
   });

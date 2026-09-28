@@ -62,7 +62,7 @@ export interface DesktopProviderInfo {
   /** Effective base URL (custom or builtin). */
   baseUrl?: string | null;
   /** How the stored credential was obtained. */
-  authKind?: 'none' | 'api_key' | 'oauth';
+  authKind?: 'none' | 'api_key' | 'oauth' | 'cli';
   /** Epoch ms when the OAuth access token expires. */
   expiresAt?: number | null;
   hasRefreshToken?: boolean;
@@ -398,14 +398,14 @@ export function buildDesktopConfigSnapshot(): DesktopConfigSnapshot {
       defaultModel,
       endpoint: custom ?? null,
       apiStyle:
-        p.id === 'anthropic' || p.id === 'chatgpt'
+        p.id === 'anthropic' || p.id === 'chatgpt' || p.id === 'claudeCode'
           ? undefined
           : getApiStyleFor(p.id as ProviderName),
       baseUrl: custom ?? builtin,
-      authKind: !hasKey ? 'none' : oauth ? 'oauth' : 'api_key',
+      authKind: p.id === 'claudeCode' ? 'cli' : !hasKey ? 'none' : oauth ? 'oauth' : 'api_key',
       expiresAt: stored?.expiresAt ?? null,
       hasRefreshToken: Boolean(stored?.refreshToken),
-      oauthSupported: isOAuthProvider(p.id),
+      oauthSupported: p.id === 'claudeCode' ? false : isOAuthProvider(p.id),
       thinking: config.thinkingByProvider[p.id] ?? 'auto',
       thinkingCapability: thinkingCapabilityFor(p.id, defaultModel),
     };
@@ -515,6 +515,12 @@ export function applySetKey(
       return {
         ok: false,
         error: `unknown provider '${req.provider}'. Available: ${PROVIDERS.map((p) => p.id).join(', ')}`,
+      };
+    }
+    if (req.provider === 'claudeCode') {
+      return {
+        ok: false,
+        error: 'Run `claude auth login` on the official Claude Code binary. Zelari does not store subscription tokens.',
       };
     }
     setApiKey(req.provider, req.key);

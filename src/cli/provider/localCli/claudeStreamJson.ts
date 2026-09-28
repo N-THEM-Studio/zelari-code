@@ -36,7 +36,7 @@ function textBlock(text: string): Record<string, unknown> {
  *   tool      → {type:"user", message:{role:"user",
  *               content:[{type:"tool_result", tool_use_id, content}]}}
  */
-export function buildClaudeInputLines(messages: AgentMessage[]): string[] {
+export function buildClaudeInputLines(messages: readonly AgentMessage[]): string[] {
   const lines: string[] = [];
   for (const m of messages) {
     if (m.role === 'system') {
@@ -96,6 +96,11 @@ export interface ClaudeStreamParser {
   readonly finished: boolean;
   /** Last stop_reason observed on an assistant message. */
   readonly stopReason: string;
+  /**
+   * Official CLI session id (`session_id` on system/init or result).
+   * Null until the binary emits one. Used only for `--resume`.
+   */
+  readonly sessionId: string | null;
 }
 
 const TOOL_USE_TEXT = (name: string, input: unknown): string =>
@@ -105,7 +110,7 @@ const TOOL_USE_TEXT = (name: string, input: unknown): string =>
  * Incremental parser for `claude -p --output-format stream-json`.
  *
  * Events handled:
- *   - system/init        → ignored
+ *   - system/init        → capture session_id, no deltas
  *   - stream_event       → content_block_delta text_delta → {kind:'text'}
  *   - assistant          → tool_use blocks → text notification; captures
  *                          stop_reason. Text blocks are NOT re-emitted (the
@@ -119,6 +124,7 @@ export function createClaudeStreamParser(): ClaudeStreamParser {
   let finished = false;
   let stopReason = 'stop';
   let totalTextStreamed = 0;
+  let sessionId: string | null = null;
 
   const push = (line: string): ProviderDelta[] => {
     if (finished) return [];
@@ -129,6 +135,9 @@ export function createClaudeStreamParser(): ClaudeStreamParser {
       msg = JSON.parse(trimmed) as { type?: string; [k: string]: unknown };
     } catch {
       return []; // never crash on non-JSON noise
+    }
+    if (typeof msg.session_id === 'string' && msg.session_id.length > 0) {
+      sessionId = msg.session_id;
     }
     const type = msg.type;
 
@@ -191,7 +200,7 @@ export function createClaudeStreamParser(): ClaudeStreamParser {
             completionTokens,
             totalTokens: promptTokens + completionTokens,
             ...(typeof usage.cache_read_input_tokens === 'number'
-              ? { cachedTokens: usage.cache_read_input_tokens }
+              ? { cachedPromptTokens: usage.cache_read_input_tokens }
               : {}),
           },
         });
@@ -210,6 +219,9 @@ export function createClaudeStreamParser(): ClaudeStreamParser {
     },
     get stopReason() {
       return stopReason;
+    },
+    get sessionId() {
+      return sessionId;
     },
   };
 }

@@ -36,6 +36,7 @@ export type ProviderName =
   | 'custom'
   | 'chatgpt'
   | 'anthropic'
+  | 'claudeCode'
   | 'muse';
 
 export interface ProviderSpec {
@@ -58,6 +59,8 @@ export const PROVIDERS: readonly ProviderSpec[] = [
   { id: 'mimo', displayName: 'Xiaomi MiMo (Token Plan)', envVar: 'MIMO_API_KEY', baseUrl: 'https://token-plan-ams.xiaomimimo.com/v1' },
   { id: 'chatgpt', displayName: 'ChatGPT (OAuth)', envVar: 'CHATGPT_API_KEY', baseUrl: 'https://chatgpt.com/backend-api/codex' },
   { id: 'anthropic', displayName: 'Anthropic Claude (OAuth)', envVar: 'ANTHROPIC_API_KEY', baseUrl: 'https://api.anthropic.com' },
+  // Subscription CLI — login stays `claude auth login`. No key is stored here.
+  { id: 'claudeCode', displayName: 'Claude Code (abbonamento)', envVar: '' },
   { id: 'muse', displayName: 'Muse (OAuth)', envVar: 'MUSE_API_KEY', baseUrl: 'https://api.meta.ai/v1' },
 ] as const;
 
@@ -180,6 +183,11 @@ function writeStore(store: StoredKeys): void {
 
 /** Store an API key for a provider. Overwrites any existing key. */
 export function setApiKey(providerId: string, key: string): void {
+  if (providerId === 'claudeCode') {
+    throw new Error(
+      'Run `claude auth login` on the official Claude Code binary. Zelari does not store subscription tokens.',
+    );
+  }
   const store = readStore();
   store.providers[providerId] = { apiKey: key };
   writeStore(store);

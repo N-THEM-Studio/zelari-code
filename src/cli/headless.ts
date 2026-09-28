@@ -654,6 +654,39 @@ export function printHeadlessHelp(): void {
   console.log(HELP_TEXT);
 }
 
+export type LocalCliRoute =
+  | { kind: 'env-override'; cli: string; providerId: 'local-cli' }
+  | { kind: 'claude-code'; cli: 'claude'; providerId: 'claudeCode'; model?: string }
+  | { kind: 'api-key' };
+
+/**
+ * Local-CLI vs API-key decision for one turn.
+ *
+ * `ZELARI_LOCAL_CLI` always wins and keeps the historical label `local-cli`.
+ * The picker id `claudeCode` spawns the official `claude` binary but does not
+ * rewrite the provider id, so logs show what was selected.
+ */
+export function decideLocalCliRoute(input: {
+  providerId: string;
+  /** Raw `ZELARI_LOCAL_CLI` value. Unset or blank = no override. */
+  localCliEnv?: string | null;
+  model?: string;
+}): LocalCliRoute {
+  const localCli = (input.localCliEnv ?? '').trim();
+  if (localCli) {
+    return { kind: 'env-override', cli: localCli, providerId: 'local-cli' };
+  }
+  if (input.providerId === 'claudeCode') {
+    return {
+      kind: 'claude-code',
+      cli: 'claude',
+      providerId: 'claudeCode',
+      ...(input.model !== undefined ? { model: input.model } : {}),
+    };
+  }
+  return { kind: 'api-key' };
+}
+
 /**
  * Resolve the API key for a provider; returns null with a reason
  * when the key is missing. Used to fail fast with a clear error
@@ -662,6 +695,14 @@ export function printHeadlessHelp(): void {
 export async function resolveHeadlessKey(providerId: string): Promise<
   { apiKey: string; baseUrl: string } | { error: string }
 > {
+  if (providerId === 'claudeCode') {
+    return {
+      error:
+        'Claude Code (abbonamento) does not use a stored credential. ' +
+        'Run `claude auth login` on the official Claude Code binary. ' +
+        'Zelari does not store subscription tokens.',
+    };
+  }
   const spec = PROVIDERS.find((p) => p.id === providerId);
   if (!spec) {
     return { error: `unknown provider: '${providerId}'` };

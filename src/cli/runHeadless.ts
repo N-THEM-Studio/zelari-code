@@ -43,6 +43,7 @@ import { COUNCIL_TIER_SIZES } from './councilConfig.js';
 import {
   emitEvent,
   resolveHeadlessCwd,
+  decideLocalCliRoute,
   resolveHeadlessKey,
   resolveHeadlessProvider,
   type HeadlessOptions,
@@ -191,10 +192,18 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   // No API key needed — the CLI is authenticated on its own. Permission
   // prompts flow to the zelari broker via ZELARI_PERM_SOCKET (Slice A).
   const localCli = (process.env.ZELARI_LOCAL_CLI ?? '').trim();
+  const cliRoute = decideLocalCliRoute({
+    providerId: provider,
+    localCliEnv: localCli,
+    model,
+  });
   let providerStream;
-  if (localCli) {
+  if (cliRoute.kind === 'env-override') {
     provider = 'local-cli';
-    providerStream = createLocalCliProvider({ cli: localCli, model });
+    providerStream = createLocalCliProvider({ cli: cliRoute.cli, model });
+  } else if (cliRoute.kind === 'claude-code') {
+    // Keep `claudeCode` so logs show the picker selection, not `local-cli`.
+    providerStream = createLocalCliProvider({ cli: 'claude', model });
   } else {
     const key = await resolveHeadlessKey(provider);
     if ('error' in key) {

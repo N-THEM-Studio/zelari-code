@@ -16,6 +16,7 @@ import {
   providerConfigFor,
   resolveActiveProvider,
 } from "../provider/openai-compatible.js";
+import { decideLocalCliRoute } from "../headless.js";
 import { buildProviderStream } from "../provider/resolveStream.js";
 import { providerFailover } from "../providerFailover.js";
 import { resolveFailoverStream } from "../crossProviderFailover.js";
@@ -332,12 +333,33 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // No API key needed — the CLI is authenticated on its own. Permission
         // prompts flow to the zelari broker via ZELARI_PERM_SOCKET (Slice A).
         const localCli = (process.env.ZELARI_LOCAL_CLI ?? "").trim();
+        const cliRoute = decideLocalCliRoute({
+          providerId: resolveActiveProvider(),
+          localCliEnv: localCli,
+          model: getActiveModel(),
+        });
         let localCliProvider: import("@zelari/core/harness").ProviderStreamFn | null = null;
-        if (localCli) {
+        if (cliRoute.kind === "env-override") {
           const { createLocalCliProvider } = await import(
             "../provider/localCli/claudeProvider.js",
           );
-          localCliProvider = createLocalCliProvider({ cli: localCli });
+          // Env opt-in stays as today: label is the CLI name, not claudeCode.
+          localCliProvider = createLocalCliProvider({ cli: cliRoute.cli });
+        } else if (cliRoute.kind === "claude-code") {
+          const { createLocalCliProvider } = await import(
+            "../provider/localCli/claudeProvider.js",
+          );
+          localCliProvider = createLocalCliProvider({
+            cli: "claude",
+            model: cliRoute.model,
+          });
+          // Identity for logs/harness. No credential — the official binary owns auth.
+          envConfig = {
+            apiKey: "",
+            baseUrl: "",
+            model: cliRoute.model || getActiveModel(),
+            providerId: "claudeCode",
+          };
         } else {
           envConfig = await providerFromEnv();
           if (!envConfig) {

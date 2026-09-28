@@ -9,13 +9,16 @@
  *     through the same `set_app_config` channel (no separate duplicate row);
  *   - advanced connection settings stay collapsed for hosted providers and
  *     open for endpoint-driven ones (openai-compatible / custom);
- *   - the API format is a described choice that writes `apiStyle`.
+ *   - the API format is a described choice that writes `apiStyle`;
+ *   - an already-active Grok card silently renews when a refresh token exists;
+ *     an already-active non-Grok card does not.
  *
  * vi.mock('react'): same root-React pin as the other settings tests.
  */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setAppConfig } from "../../agentClient";
+import { loginOAuth, refreshOAuth, setAppConfig } from "../../agentClient";
+import { resetGrokRenewForTests } from "../../grokSessionRenew";
 import type { DesktopConfig } from "../../types";
 import { ProviderSection } from "./ProviderSection";
 import { SettingsToastProvider } from "./primitives";
@@ -30,17 +33,23 @@ vi.mock("../../agentClient", () => ({
   setApiKey: vi.fn(async () => ({ ok: true })),
   loginOAuth: vi.fn(async () => ({ ok: true })),
   logoutOAuth: vi.fn(async () => ({ ok: true })),
-  refreshOAuth: vi.fn(async () => ({ ok: true })),
+  refreshOAuth: vi.fn(async () => ({ ok: true, message: "Refreshed grok OAuth token." })),
 }));
 
 const setConfigMock = vi.mocked(setAppConfig);
+const refreshMock = vi.mocked(refreshOAuth);
+const loginMock = vi.mocked(loginOAuth);
 
 afterEach(() => {
   cleanup();
   setConfigMock.mockClear();
+  refreshMock.mockReset();
+  refreshMock.mockResolvedValue({ ok: true, message: "Refreshed grok OAuth token." });
+  loginMock.mockClear();
+  resetGrokRenewForTests();
 });
 
-function config(activeProviderId = "grok"): DesktopConfig {
+function config(activeProviderId = "grok", grokHasRefreshToken?: boolean): DesktopConfig {
   return {
     activeProviderId,
     modelByProvider: { grok: "grok-4", "openai-compatible": "llama3" },
@@ -53,6 +62,7 @@ function config(activeProviderId = "grok"): DesktopConfig {
         envVar: "GROK_API_KEY",
         models: ["grok-4", "grok-3-fast"],
         defaultModel: "grok-4",
+        hasRefreshToken: grokHasRefreshToken,
       },
       {
         id: "openai-compatible",
@@ -69,19 +79,27 @@ function config(activeProviderId = "grok"): DesktopConfig {
   } as DesktopConfig;
 }
 
-function renderSection(activeProviderId?: string) {
+function renderSection(activeProviderId?: string, grokHasRefreshToken?: boolean) {
   const onRefresh = vi.fn(async () => {});
   const onActiveProviderChange = vi.fn();
   render(
     <SettingsToastProvider>
       <ProviderSection
-        config={config(activeProviderId)}
+        config={config(activeProviderId, grokHasRefreshToken)}
         onRefresh={onRefresh}
         onActiveProviderChange={onActiveProviderChange}
       />
     </SettingsToastProvider>,
   );
   return { onRefresh, onActiveProviderChange };
+}
+
+function clickCard(label: string) {
+  const card = Array.from(document.querySelectorAll(".s-provider-card")).find((el) =>
+    (el.textContent ?? "").includes(label),
+  );
+  if (!card) throw new Error(`missing provider card ${label}`);
+  fireEvent.click(card);
 }
 
 describe("ProviderSection — guided steps", () => {
@@ -122,5 +140,52 @@ describe("ProviderSection — guided steps", () => {
     await waitFor(() =>
       expect(setConfigMock).toHaveBeenCalledWith({ provider: "openai-compatible", apiStyle: "responses" }),
     );
+  });
+});
+
+describe("ProviderSection — silent Grok renew", () => {
+  it("renews when the already-active Grok card is clicked and does not login", async () => {
+    renderSection("grok", true);
+    clickCard("Grok");
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledWith({ provider: "grok" }));
+    expect(loginMock).not.toHaveBeenCalled();
+    expect(setConfigMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Sign in/ })).toBeTruthy();
+  });
+
+  it("does not renew an already-active non-Grok provider", async () => {
+    renderSection("openai-compatible", true);
+    clickCard("OpenAI-compatible");
+    await Promise.resolve();
+    expect(refreshMock).not.toHaveBeenCalled();
+    expect(loginMock).not.toHaveBeenCalled();
+    expect(setConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("does not start a second refresh while one is already in flight", async () => {
+    let release: (value: { ok: boolean; message: string }) => void = () => {};
+    refreshMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderSection("grok", true);
+    clickCard("Grok");
+    clickCard("Grok");
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+    release({ ok: true, message: "Refreshed grok OAuth token." });
+    await waitFor(() => expect(screen.getByText("Refreshed grok OAuth token.")).toBeTruthy());
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+    expect(loginMock).not.toHaveBeenCalled();
+  });
+
+  it("shows invalid_grant and leaves Sign in unchanged", async () => {
+    refreshMock.mockResolvedValue({ ok: false, error: "invalid_grant" });
+    renderSection("grok", true);
+    clickCard("Grok");
+    await waitFor(() => expect(screen.getByText("invalid_grant")).toBeTruthy());
+    expect(loginMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /Sign in/ })).toBeTruthy();
   });
 });

@@ -137,11 +137,27 @@ export function createHeadlessTurnDispatcher(deps: HeadlessTurnDeps = {}): AcpTu
         if (deps.resolveStream) return deps.resolveStream();
         // Dynamic imports keep the TUI/provider graph out of the module load
         // path until a turn actually needs it (same discipline as runHeadless).
-        const { resolveHeadlessKey, resolveHeadlessProvider } = await import('../headless.js');
-        const { provider, model } = resolveHeadlessProvider({
+        const { decideLocalCliRoute, resolveHeadlessKey, resolveHeadlessProvider } = await import('../headless.js');
+        const resolved = resolveHeadlessProvider({
           ...(deps.provider ? { provider: deps.provider } : {}),
           ...(deps.model ? { model: deps.model } : {}),
         } as HeadlessOptions);
+        let provider = resolved.provider;
+        const { model } = resolved;
+        // API providers keep today's ACP behavior (ZELARI_LOCAL_CLI ignored).
+        // The opt-in still overrides a claudeCode selection and labels `local-cli`.
+        const cliRoute = decideLocalCliRoute({
+          providerId: provider,
+          localCliEnv: provider === 'claudeCode' ? process.env.ZELARI_LOCAL_CLI : '',
+          model,
+        });
+        if (cliRoute.kind !== 'api-key') {
+          const { createLocalCliProvider } = await import('../provider/localCli/claudeProvider.js');
+          const stream = cliRoute.kind === 'env-override'
+            ? createLocalCliProvider({ cli: cliRoute.cli, model })
+            : createLocalCliProvider({ cli: 'claude', model });
+          return { provider: cliRoute.providerId, model, stream };
+        }
         const key = await resolveHeadlessKey(provider);
         if ('error' in key) throw new Error(key.error);
         const { buildProviderStream } = await import('../provider/resolveStream.js');

@@ -126,7 +126,7 @@ export interface DesktopProviderInfo {
   endpoint?: string | null;
   apiStyle?: "chat" | "responses";
   baseUrl?: string | null;
-  authKind?: "none" | "api_key" | "oauth";
+  authKind?: "none" | "api_key" | "oauth" | "cli";
   expiresAt?: number | null;
   hasRefreshToken?: boolean;
   oauthSupported?: boolean;

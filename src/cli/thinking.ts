@@ -63,6 +63,8 @@ export const PROVIDER_THINKING_CAPABILITY: Record<ProviderName, ThinkingCapabili
   grok: { effort: true },
   chatgpt: { effort: true },
   anthropic: { budget: true },
+  // Claude Code owns its loop; Zelari must not send thinking params.
+  claudeCode: {},
   muse: { effort: true },
   glm: { budget: true },
   deepseek: { effort: true },

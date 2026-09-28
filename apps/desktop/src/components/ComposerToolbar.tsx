@@ -51,6 +51,8 @@ export interface ComposerToolbarProps {
   onThinkingChange: (spec: string) => void;
   onConfigRefresh?: (cfg: DesktopConfig) => void;
   onStatus?: (msg: string) => void;
+  /** Silent Grok renew for the already-selected provider (select does not re-fire). */
+  onRenewGrokSession?: () => void;
   /** The same pref Settings → Tool permissions writes. */
   permissionPreset: PermissionPreset;
   onPermissionPresetChange: (preset: PermissionPreset) => void;
@@ -150,6 +152,7 @@ export function ComposerToolbar({
   onThinkingChange,
   onConfigRefresh,
   onStatus,
+  onRenewGrokSession,
   permissionPreset,
   onPermissionPresetChange,
   tentacles,
@@ -205,6 +208,7 @@ export function ComposerToolbar({
           onThinkingChange={onThinkingChange}
           onConfigRefresh={onConfigRefresh}
           onStatus={onStatus}
+          onRenewGrokSession={onRenewGrokSession}
         />
       </Pill>
 

@@ -400,6 +400,8 @@ export const PROVIDER_ENDPOINTS: Record<ProviderName, string> = {
   'mimo': 'https://token-plan-ams.xiaomimimo.com/v1',
   'chatgpt': 'https://chatgpt.com/backend-api/codex',
   'anthropic': 'https://api.anthropic.com',
+  // Subscription path never calls this URL — the official binary owns the session.
+  'claudeCode': '',
   'muse': 'https://api.meta.ai/v1',
   'custom': '',
 };

@@ -294,6 +294,15 @@ export function handleSlashCommand(
       if (!provider) {
         return { handled: true, kind: 'login', message: 'Usage: /login <provider> [key] (or /login grok|chatgpt|anthropic|muse for OAuth)' };
       }
+      // Subscription CLI login stays on the official binary. Do not OAuth and do not store a key.
+      if (provider === 'claudeCode') {
+        return {
+          handled: true,
+          kind: 'login',
+          provider,
+          message: '[login] Run `claude auth login` on the official Claude Code binary. Zelari does not store subscription tokens.',
+        };
+      }
       const key = args.slice(1).join(' ').trim();
       if (!key) {
         if (provider === 'grok' || provider === 'chatgpt' || provider === 'anthropic' || provider === 'muse') {
@@ -357,14 +366,14 @@ export function handleSlashCommand(
         return {
           handled: true,
           kind: 'provider_picker',
-          message: 'Usage: /provider — pick from a list\n         /provider <name> — switch active provider\n         /provider list — print the current provider + available ids\n         /provider custom <baseUrl> — set custom base URL (Ollama, LM Studio, vLLM, ...)\n         /provider custom clear — clear the custom override\n         /provider <name> refresh — force token refresh (v3-F)\n         /provider <name> status — show key source, expiry, refresh impl (v3-F)\nAvailable: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, custom',
+          message: 'Usage: /provider — pick from a list\n         /provider <name> — switch active provider\n         /provider list — print the current provider + available ids\n         /provider custom <baseUrl> — set custom base URL (Ollama, LM Studio, vLLM, ...)\n         /provider custom clear — clear the custom override\n         /provider <name> refresh — force token refresh (v3-F)\n         /provider <name> status — show key source, expiry, refresh impl (v3-F)\nAvailable: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, claudeCode, custom',
         };
       }
       if (subcommand === 'list') {
         return {
           handled: true,
           kind: 'provider_list',
-          message: 'Usage: /provider <name> — switch active provider\nAvailable: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, custom',
+          message: 'Usage: /provider <name> — switch active provider\nAvailable: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, claudeCode, custom',
         };
       }
       if (subcommand === 'custom') {

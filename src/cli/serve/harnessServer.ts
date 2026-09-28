@@ -63,7 +63,7 @@ import {
   getLiveTurnControl,
   runWithSession,
 } from './sessionControl.js';
-import { resolveHeadlessKey, resolveHeadlessProvider, type HeadlessOptions } from '../headless.js';
+import { decideLocalCliRoute, resolveHeadlessKey, resolveHeadlessProvider, type HeadlessOptions } from '../headless.js';
 import { dispatchHeadlessTurn } from '../runHeadless.js';
 import { parseMode } from '../mode.js';
 import { LspManager, type LspProvider } from '../lsp/manager.js';
@@ -243,7 +243,23 @@ export function resolveTurnLspProvider(
 export async function resolveServedTurnStream(
   opts: HeadlessOptions,
 ): Promise<{ provider: string; model: string; stream: unknown }> {
-  const { provider, model } = resolveHeadlessProvider(opts);
+  const resolved = resolveHeadlessProvider(opts);
+  const model = resolved.model;
+  let provider = resolved.provider;
+  // API providers keep today's sidecar behavior (ZELARI_LOCAL_CLI ignored).
+  // The opt-in still overrides a claudeCode selection and labels `local-cli`.
+  const cliRoute = decideLocalCliRoute({
+    providerId: provider,
+    localCliEnv: provider === 'claudeCode' ? process.env.ZELARI_LOCAL_CLI : '',
+    model,
+  });
+  if (cliRoute.kind !== 'api-key') {
+    const { createLocalCliProvider } = await import('../provider/localCli/claudeProvider.js');
+    const stream = cliRoute.kind === 'env-override'
+      ? createLocalCliProvider({ cli: cliRoute.cli, model })
+      : createLocalCliProvider({ cli: 'claude', model });
+    return { provider: cliRoute.providerId, model, stream };
+  }
   const key = await resolveHeadlessKey(provider);
   if ('error' in key) throw new Error(key.error);
   const { buildProviderStream } = await import('../provider/resolveStream.js');
