@@ -43,6 +43,7 @@
     "smoke:acp": "node scripts/smoke-acp.mjs",
     "smoke:mission": "vitest run src/cli/headless/missionE2e.smoke.test.ts",
     "mission:metrics": "node scripts/mission-metrics.mjs",
+    "gauge:inventory": "node scripts/gauge-inventory.mjs",
     "metrics:composition": "node scripts/message-composition.mjs",
     "verify:council": "npm run build --workspace=@zelari/core && node scripts/verify-council.mjs",
     "verify:principles": "node scripts/verify-principles.mjs",
