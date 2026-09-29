@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.66.0] - 2026-09-29
+
+### Added
+
+- **Claude Code as a first-class local-CLI provider** — `claude -p` exits after one prompt, so a single process cannot outlive a harness turn, and the tool loop replays the full transcript on re-entry: a fresh Claude conversation per re-entry was the failure mode. The official session id from `system/init` is now kept per harness `conversationId` and passed back with `--resume`, so a resumed session is not replayed; turn 1 still sends the full transcript, later turns only the new user/tool messages. Claude keeps its own tools inside that one `-p` process — Zelari does not re-execute them. `decideLocalCliRoute()` keeps `ZELARI_LOCAL_CLI` winning with the historical `local-cli` label, while the picker id `claudeCode` spawns the same binary without rewriting the provider id, so logs show what was actually selected. `--permission-mode` maps plan → `plan`, build → `acceptEdits` (not bypass). `claudeCode` stores no token: new `authKind: 'cli'` says so in the Desktop config snapshot, and both the headless resolver and the Settings card point at `claude auth login`.
+- **Grok sessions renew silently from Desktop** — renewing from the chat picker and from Settings could start a device-code login and open a browser, which is the wrong move for a user who only wants the session back. `renewGrokSession()` reuses the existing `refreshOAuth` IPC, never starts a device flow and never opens a browser. One shared in-flight promise means two clicks cannot spawn two CLI refresh processes, and Settings reuses the same lock as the picker. Other providers keep their direct call.
+- **Request composition in the metrics** — `npm run metrics:composition` reads the metrics log and prints what each request was made of (system prompt, tool schemas with the MCP ones split out, trailing context, user, assistant, tool results by tool), so a token bill can be attributed to a single cause.
+- **`npm run gauge:inventory`** — a read-only inventory of the session logs that counts usable *label pairs* per source, not sessions. Exists because the Gauge design note estimated ~900 calibration examples from the archive without ever measuring it, and the F0 → F1 gate needed a number.
+
+### Changed
+
+- **Gauge F0 measured, and the estimate corrected** — on 1099 sessions / 64678 events the archive yields **4** labels with a real verification verdict, not ~900: of 112 `verification.run` events, **106 report `reason=strict-off`**, which is the runtime honestly stating it never evaluated. Those are declared absences, not evidence of absence (P1), so the gate is **NO-GO** (needs ≥ 200). F1 and F2 therefore swap order: the dataset is born in the shadow phase, where every case gets an outcome by construction, instead of being fit on a pre-verdict archive. The design note now carries the measured numbers, the five code assumptions that F0 closed, and the two label sources that turned out not to exist on the spine (`/undo` / `/rollback` leave no event; `.zelari/reviews/` is absent). The historical archive is still useful — to pick the extraction method and the candidate model, not to calibrate.
+
 ## [2.65.0] - 2026-09-25
 
 ### Added
