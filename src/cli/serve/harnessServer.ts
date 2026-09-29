@@ -63,7 +63,8 @@ import {
   getLiveTurnControl,
   runWithSession,
 } from './sessionControl.js';
-import { decideLocalCliRoute, resolveHeadlessKey, resolveHeadlessProvider, type HeadlessOptions } from '../headless.js';
+import { resolveHeadlessKey, resolveHeadlessProvider, type HeadlessOptions } from '../headless.js';
+import { decideLocalCliRoute } from '../provider/localCli/localCliRoute.js';
 import { dispatchHeadlessTurn } from '../runHeadless.js';
 import { parseMode } from '../mode.js';
 import { LspManager, type LspProvider } from '../lsp/manager.js';

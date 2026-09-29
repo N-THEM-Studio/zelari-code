@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applySetKey, buildDesktopConfigSnapshot } from '../../src/cli/desktopConfig.js';
-import { decideLocalCliRoute, resolveHeadlessKey } from '../../src/cli/headless.js';
+import { resolveHeadlessKey } from '../../src/cli/headless.js';
+import { decideLocalCliRoute, needsLocalCliRoute } from '../../src/cli/provider/localCli/localCliRoute.js';
 import {
   OAUTH_PROVIDER_IDS,
   PROVIDERS,
@@ -142,6 +143,18 @@ describe('claudeCode picker', () => {
       model: 'claude-sonnet-4-6',
     } as HeadlessOptions);
     expect(overridden.provider).toBe('local-cli');
+  });
+
+  it('lets a host skip the active-provider read when the env already decided', () => {
+    // The TUI must not resolve the active provider (config reads, and in a
+    // mocked host a function that may not exist) for a route the env has
+    // already settled.
+    expect(needsLocalCliRoute('claude')).toBe(false);
+    expect(needsLocalCliRoute('codex')).toBe(false);
+    expect(needsLocalCliRoute('')).toBe(true);
+    expect(needsLocalCliRoute('   ')).toBe(true);
+    expect(needsLocalCliRoute(undefined)).toBe(true);
+    expect(needsLocalCliRoute(null)).toBe(true);
   });
 
   it('/login claudeCode does not start OAuth or accept a key', () => {

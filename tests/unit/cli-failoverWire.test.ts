@@ -35,10 +35,15 @@ describe('useChatTurn.ts wiring of providerFailover (Task G.1.2)', () => {
     // dispatchPrompt must reference providerFailover and the env knob.
     const idx = src.indexOf('const dispatchPrompt');
     expect(idx).toBeGreaterThan(0);
-    // Window must cover ask_user wiring that precedes failover in dispatchPrompt.
-    const window = src.slice(idx, idx + 16000);
-    expect(window).toMatch(/providerFailover\s*\(\s*\{/);
-    expect(window).toMatch(/ANATHEMA_FAILOVER/);
+    // The window must cover the failover wiring, which precedes the END of
+    // dispatchPrompt. A fixed character count silently stopped covering it
+    // when unrelated wiring was added earlier in the function: the test then
+    // failed on a working file. Bound the window by the function body, not by
+    // a byte count that goes stale.
+    const end = src.indexOf('\n  const ', idx + 1);
+    const body = end > idx ? src.slice(idx, end) : src.slice(idx);
+    expect(body).toMatch(/providerFailover\s*\(\s*\{/);
+    expect(body).toMatch(/ANATHEMA_FAILOVER/);
   });
 
   it('app.tsx imports useChatTurn so the wiring is reachable', () => {

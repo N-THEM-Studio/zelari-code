@@ -173,10 +173,13 @@ describe('useChatTurn.ts wiring of cross-provider failover (Task J.3.3)', () => 
     const src = readFileSync(USE_CHAT_TURN_PATH, 'utf-8');
     const idx = src.indexOf('const dispatchPrompt');
     expect(idx).toBeGreaterThan(-1);
-    // Window must cover ask_user wiring that precedes failover in dispatchPrompt.
-    const window = src.slice(idx, idx + 16000);
-    expect(window).toMatch(/ANATHEMA_FAILOVER_PROVIDER/);
-    expect(window).toMatch(/resolveFailoverStream\s*\(\s*\{/);
+    // Bounded by the function body, not a fixed character count: a byte
+    // window goes stale as soon as unrelated wiring is added earlier in
+    // dispatchPrompt, and then fails on a working file.
+    const end = src.indexOf('\n  const ', idx + 1);
+    const body = end > idx ? src.slice(idx, end) : src.slice(idx);
+    expect(body).toMatch(/ANATHEMA_FAILOVER_PROVIDER/);
+    expect(body).toMatch(/resolveFailoverStream\s*\(\s*\{/);
   });
 });
 

@@ -16,7 +16,7 @@ import {
   providerConfigFor,
   resolveActiveProvider,
 } from "../provider/openai-compatible.js";
-import { decideLocalCliRoute } from "../headless.js";
+import { decideLocalCliRoute, needsLocalCliRoute } from "../provider/localCli/localCliRoute.js";
 import { buildProviderStream } from "../provider/resolveStream.js";
 import { providerFailover } from "../providerFailover.js";
 import { resolveFailoverStream } from "../crossProviderFailover.js";
@@ -333,34 +333,51 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // No API key needed — the CLI is authenticated on its own. Permission
         // prompts flow to the zelari broker via ZELARI_PERM_SOCKET (Slice A).
         const localCli = (process.env.ZELARI_LOCAL_CLI ?? "").trim();
-        const cliRoute = decideLocalCliRoute({
-          providerId: resolveActiveProvider(),
-          localCliEnv: localCli,
-          model: getActiveModel(),
-        });
         let localCliProvider: import("@zelari/core/harness").ProviderStreamFn | null = null;
-        if (cliRoute.kind === "env-override") {
+        if (needsLocalCliRoute(localCli)) {
+          // The env did not opt in, so the only way a local CLI can still be
+          // the route is a claudeCode selection in the picker. Reading the
+          // active provider is config work, so it happens here, in the one
+          // branch that needs it - never on the ordinary API-key path.
+          // A host that does not expose the resolver (mocked or partial
+          // module graph) must still run the turn: without a provider id
+          // there is no claudeCode selection to act on.
+          let activeProviderId = "";
+          try {
+            activeProviderId = resolveActiveProvider?.() ?? "";
+          } catch {
+            activeProviderId = "";
+          }
+          const cliRoute = decideLocalCliRoute({
+            providerId: activeProviderId,
+            localCliEnv: localCli,
+            model: getActiveModel(),
+          });
+          if (cliRoute.kind === "claude-code") {
+            const { createLocalCliProvider } = await import(
+              "../provider/localCli/claudeProvider.js",
+            );
+            localCliProvider = createLocalCliProvider({
+              cli: "claude",
+              model: cliRoute.model,
+            });
+            // Identity for logs/harness. No credential - the binary owns auth.
+            envConfig = {
+              apiKey: "",
+              baseUrl: "",
+              model: cliRoute.model || getActiveModel(),
+              providerId: "claudeCode",
+            };
+          }
+        }
+        if (localCliProvider === null && localCli) {
           const { createLocalCliProvider } = await import(
             "../provider/localCli/claudeProvider.js",
           );
           // Env opt-in stays as today: label is the CLI name, not claudeCode.
-          localCliProvider = createLocalCliProvider({ cli: cliRoute.cli });
-        } else if (cliRoute.kind === "claude-code") {
-          const { createLocalCliProvider } = await import(
-            "../provider/localCli/claudeProvider.js",
-          );
-          localCliProvider = createLocalCliProvider({
-            cli: "claude",
-            model: cliRoute.model,
-          });
-          // Identity for logs/harness. No credential — the official binary owns auth.
-          envConfig = {
-            apiKey: "",
-            baseUrl: "",
-            model: cliRoute.model || getActiveModel(),
-            providerId: "claudeCode",
-          };
-        } else {
+          localCliProvider = createLocalCliProvider({ cli: localCli });
+        }
+        if (localCliProvider === null) {
           envConfig = await providerFromEnv();
           if (!envConfig) {
             // Name the ACTIVE provider — the old hardcoded "OPENAI_API_KEY not

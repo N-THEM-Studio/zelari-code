@@ -137,7 +137,8 @@ export function createHeadlessTurnDispatcher(deps: HeadlessTurnDeps = {}): AcpTu
         if (deps.resolveStream) return deps.resolveStream();
         // Dynamic imports keep the TUI/provider graph out of the module load
         // path until a turn actually needs it (same discipline as runHeadless).
-        const { decideLocalCliRoute, resolveHeadlessKey, resolveHeadlessProvider } = await import('../headless.js');
+        const { resolveHeadlessKey, resolveHeadlessProvider } = await import('../headless.js');
+        const { decideLocalCliRoute } = await import('../provider/localCli/localCliRoute.js');
         const resolved = resolveHeadlessProvider({
           ...(deps.provider ? { provider: deps.provider } : {}),
           ...(deps.model ? { model: deps.model } : {}),

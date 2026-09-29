@@ -43,11 +43,11 @@ import { COUNCIL_TIER_SIZES } from './councilConfig.js';
 import {
   emitEvent,
   resolveHeadlessCwd,
-  decideLocalCliRoute,
   resolveHeadlessKey,
   resolveHeadlessProvider,
   type HeadlessOptions,
 } from './headless.js';
+import { decideLocalCliRoute } from './provider/localCli/localCliRoute.js';
 import { createLocalCliProvider } from './provider/localCli/claudeProvider.js';
 import {
   buildSystemPromptSplit,

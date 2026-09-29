@@ -29,7 +29,6 @@ import type { PermissionAskHandler } from './safety/toolPermissions.js';
 import type { AskUserHandler } from './tools/askUser.js';
 import { getCurrentHarnessSessionId } from './serve/sessionControl.js';
 import { HARNESS_SESSION_FIELD } from './headless/protocol.js';
-
 /** Dispatch mode for headless (mirrors TUI shift+tab modes). */
 export type HeadlessMode = ChatMode; // 'kraken' | 'council' | 'zelari'
 
@@ -652,39 +651,6 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
 export function printHeadlessHelp(): void {
   // eslint-disable-next-line no-console
   console.log(HELP_TEXT);
-}
-
-export type LocalCliRoute =
-  | { kind: 'env-override'; cli: string; providerId: 'local-cli' }
-  | { kind: 'claude-code'; cli: 'claude'; providerId: 'claudeCode'; model?: string }
-  | { kind: 'api-key' };
-
-/**
- * Local-CLI vs API-key decision for one turn.
- *
- * `ZELARI_LOCAL_CLI` always wins and keeps the historical label `local-cli`.
- * The picker id `claudeCode` spawns the official `claude` binary but does not
- * rewrite the provider id, so logs show what was selected.
- */
-export function decideLocalCliRoute(input: {
-  providerId: string;
-  /** Raw `ZELARI_LOCAL_CLI` value. Unset or blank = no override. */
-  localCliEnv?: string | null;
-  model?: string;
-}): LocalCliRoute {
-  const localCli = (input.localCliEnv ?? '').trim();
-  if (localCli) {
-    return { kind: 'env-override', cli: localCli, providerId: 'local-cli' };
-  }
-  if (input.providerId === 'claudeCode') {
-    return {
-      kind: 'claude-code',
-      cli: 'claude',
-      providerId: 'claudeCode',
-      ...(input.model !== undefined ? { model: input.model } : {}),
-    };
-  }
-  return { kind: 'api-key' };
 }
 
 /**
