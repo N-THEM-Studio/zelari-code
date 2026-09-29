@@ -9,7 +9,7 @@ Gauge è un nuovo tentacolo Kraken che, con una sola chiamata a un modello già 
 - **Cosa fa:** una chiamata, zero tool, output tipizzato con probabilità grezza e probabilità calibrata per ogni domanda.
 - **Perché:** concentrare verify tentacle, council e intervento umano sui casi dubbi, e spendere meno sui casi chiari.
 - **Cosa non fa:** non sostituisce il gate deterministico `/verify`, non chiude mai un task, non richiede Jev né nuovi provider.
-- **Dati:** la calibrazione nasce dalle 900+ sessioni già registrate sulla macchina di lavoro, prima di toccare il comportamento in produzione.
+- **Dati:** la calibrazione **non** nasce dalle 900+ sessioni già registrate. Misurata in F0, la macchina dà **4 label forti** su 1099 sessioni, e il cancello F0 → F1 è **NO-GO**. L'archivio storico serve a scegliere metodo e modello, non a calibrare: il dataset nasce dalla fase shadow. Vedi [Usare le sessioni esistenti](#usare-le-sessioni-esistenti) e [Cosa cambia dopo F0](#cosa-cambia-dopo-f0).
 
 ## Contesto
 
@@ -195,30 +195,82 @@ Scelta di τ\_ok: la soglia più bassa per cui, sul set di validazione, il tasso
 - τ\_inj scelta per richiamo ≥ 95% sul set sintetico (valore proposto).
 - Sopra soglia, nella TUI l'output resta fuori dal contesto finché l'utente non conferma; in headless viene bloccato con evento spine, coerente con il fail-closed.
 
-## Usare le 900+ sessioni esistenti
+## Usare le sessioni esistenti
 
-Le sessioni già registrate possono evitare il cold start su `claim_supported`, ma quanti esempi etichettati contengono non si sa ancora: è la prima cosa da misurare. Tutto il lavoro su questi dati è offline e in sola lettura.
+> **Stato @ 2.65.0 — F0 eseguito.** La stima di ~900 esempi che questa sezione
+> conteneva **non regge**: misurata su 1099 sessioni / 64.678 eventi, le coppie
+> etichettate utilizzabili sono **4**, non 900. I numeri reali sono qui sotto e
+> il cancello F0 → F1 è **NO-GO**. Cosa cambia per il piano è in
+> [Cosa cambia dopo F0](#cosa-cambia-dopo-f0).
 
-### 1. Inventario
+Le sessioni già registrate possono evitare il cold start su `claim_supported`, ma quanto contengano è stato misurato: **4 label forti**. Tutto il lavoro su questi dati resta offline e in sola lettura.
 
-Uno script in sola lettura (`scripts/gauge-inventory.ts`) produce un report con:
+### 1. Inventario — misurato
 
-- sessioni per versione di Zelari, provider e modello;
-- punti di "fatto": momenti in cui un tentacolo o l'agente dichiara il completamento;
-- quanti di questi punti sono seguiti da un esito utilizzabile (tabella sotto) e con quale distribuzione PASS/FAIL;
-- quota di sessioni per progetto, incluso Zelari stesso, per capire se un solo repository domina il dataset.
+`npm run gauge:inventory` (`scripts/gauge-inventory.mjs`, read-only, exit 1 su
+input errato) produce il report. Non serve uno script nuovo: esiste ed è
+coperto da `tests/unit/gauge-inventory.test.ts` (6 test), che blocca la
+separazione fra verdetto reale e non-valutazione.
 
-Stima di massima: esempi ≈ 900 × punti di "fatto" per sessione × quota con esito. Con 2 punti per sessione e metà con esito si arriva a circa 900 esempi: bastano per un calibratore Platt su 2 o 3 modelli, non ancora per l'isotonica.
+Uscita misurata su questa macchina:
 
-### 2. Fonti di etichetta
+```
+sessions scanned          : 1099
+events scanned            : 64678
+sessions with a user msg  : 1098
+claim points (candidates) : 321
 
-| Fonte | Ruolo | Affidabilità | Nota |
+verification.run           112
+  unevaluated              108   <- NON sono label
+      reason=strict-off    106
+  with a real verdict        4
+      verdict=BLOCKED       2
+      verdict=unknown       2
+verification.evidence        6
+verify debt (label deboli) 105
+Minosse reviews           assente
+
+F0 -> F1 gate: NO-GO (serve >= 200 hard labels, ne abbiamo 4)
+```
+
+I **321 claim point** sono candidati, non label: sono turni `assistant.message`
+con forma dichiarativa ("done", "implementato", "completato"), rilevati per
+espressione regolare. Non c'è un tipo di evento dedicato per la dichiarazione
+di completamento, quindi il punto di "fatto" è **testo**, e il testo è
+l'unica cosa che l'agente controlla. È il rischio "l'agente scrive
+dichiarazioni persuasive" già elencato, verificato.
+
+La stima precedente (900 × 2 punti × metà con esito ≈ 900) sbagliava su un
+passaggio: contava i *punti di "fatto"*, non gli *esiti*. Una sessione senza
+verdetto non produce una coppia (rawProbability, realOutcome) e quindi non
+produce nulla di calibrabile. Su 321 candidati, **4** hanno un verdetto.
+
+Perché il tasso è così basso: `verification.*` sullo spine è arrivato con la
+2.53, e 106 run su 112 riportano `reason=strict-off`, cioè il runtime che
+dichiara onestamente di non aver valutato. Sono **assenza dichiarata, non
+prova di assenza** (P1): contarli come label trasformerebbe un non-verdetto in
+un pass. Il test suite blocca esattamente questo drift.
+
+
+### 2. Fonti di etichetta — misurate
+
+| Fonte | Ruolo | Affidabilità | Misura @ 2.65.0 |
 | --- | --- | --- | --- |
-| Gate `/verify` strict | Filtro, non etichetta | Alta | In produzione Gauge vede solo i casi che hanno passato il gate: i casi FAIL del gate si escludono dal dataset |
-| Verdetto del verify tentacle (eventi `verification.*`) | Etichetta principale | Media-alta | Solo nelle versioni che registrano questi eventi |
-| Verdetto di Minosse in `.zelari/reviews/` | Etichetta | Media | Sessioni council |
-| `/undo` o `/rollback` entro pochi turni da un "fatto" | FAIL implicito | Media, rumorosa | Ottimo segnale negativo |
+| Gate `/verify` strict | Filtro, non etichetta | Alta | 112 run, di cui 106 `strict-off` (non valutati) |
+| Verdetto del verify tentacle (eventi `verification.*`) | Etichetta principale | Media-alta | **4** con verdetto reale (2 BLOCKED, 2 unknown); 6 eventi evidence |
+| Verdetto di Minosse in `.zelari/reviews/` | Etichetta | Media | **assente**: la directory non esiste su questa macchina |
+| `verify.debt_open` / `verify.debt_cleared` | FAIL / PASS debole | Bassa | 105 eventi, ma coprono i turni, non i claim point |
+| `/undo` o `/rollback` entro pochi turni da un "fatto" | FAIL implicito | Media, rumorosa | **non disponibile**: nessun tipo di evento dedicato nello spine |
+| Diff del working tree al checkpoint | ricostruibile | Alta | le chiamate `file.applied` ci sono (1199), i checkpoint SHA no |
 | Sessione proseguita senza correzioni | PASS debole | Bassa | Solo per spareggi, oppure escluso |
+
+Due righe che were stimate **non esistono come fonti**:
+`/undo` e `/rollback` non emettono nessun `SESSION_EVENT_KINDS` (l'insieme è
+chiuso e non contiene nulla di undo/rollback), e `.zelari/reviews/` non
+esiste. Il FAIL implicito da `/undo` — che il doc precedente indicava come
+"ottimo segnale negativo" — **non è estraibile dallo spine**. Va sia
+aggiunto un evento se lo si vuole, sia abbandonato come fonte per il replay
+storico.
 
 ### 3. Costruzione del dataset
 
@@ -247,11 +299,38 @@ Cinque fasi, e le prime due non cambiano nulla nel comportamento di Zelari. Ogni
 
 Consegne per fase:
 
-- **F0:** report d'inventario delle sessioni e decisione su quali chiavi hanno abbastanza dati.
-- **F1:** dataset versionato, calibratori per i modelli candidati, report con AUROC, ECE e costo per decisione. Scelta del modello di Gauge.
-- **F2:** Gauge rilasciato con `ZELARI_GAUGE=shadow`; registra decisioni ed esiti reali senza influire.
+- **F0 — FATTO.** Report d'inventario: `npm run gauge:inventory`. Esito **NO-GO** (4 label forti, serve 200). Consegnato in `8b5f437`.
+- **F0b:** F0 ripetuto a intervalli, per misurare **la velocità con cui le label si accumulano** da sole. È la metrica che oggi manca, ed è l'unica che rende F1 non-arbitraria. Un `gauge:inventory` mensile in CI non costa token.
+- **F1:** dataset versionato, calibratori per i modelli candidati, report con AUROC, ECE e costo per decisione. **Si apre su dati F2** (vedi sotto), non sullo storico.
+- **F2:** Gauge rilasciato con `ZELARI_GAUGE=shadow`; registra decisioni ed esiti reali senza influire. **È qui che il dataset nasce**: per costruzione ogni caso riceve un esito, quindi il bias di selezione che affligge il replay storico non esiste.
 - **F3:** `ZELARI_GAUGE=on` attiva le decisioni solo per `claim_supported` e `injection_present`.
 - **F4:** `reward_hacking`, `scope_drift` e `uncertainty_concealed` escono dallo shadow, una alla volta.
+
+### Cosa cambia dopo F0
+
+L'ordine originale era F0 (inventario) → F1 (fit sui dati storici) → F2
+(shadow). Con 4 label lo storico non regge F1, quindi **F1 e F2 si
+invertono**: si rilascia prima lo shadow, e il fit avviene sui dati prodotti
+da lui. Le conseguenze oneste:
+
+1. **Il cold start non si evita.** `claim_supported` parte in `cold_start` ed
+   escala sempre, finché non ci sono 200 esempi *nuovi*. Il gate di
+   `ZELARI_GAUGE_TARGET_FAIL` non si può nemmeno calcolare prima.
+2. **Il tempo al primo calibratore è calendario, non lavoro.** Con il volume
+   osservato (4 label in 1099 sessioni, di cui 2 BLOCKED), reaching 200
+   coppie è un arco di mesi, non una sprint. Va detto prima di promettere
+   tempi.
+3. **Il replay storico non si butta**, ma serve a un altro scopo: misurare
+   AUROC e ECE *provvisori* su 4 punti non significa niente. Può servire a
+   scegliere il metodo di estrazione e il modello candidato, non a calibrare.
+4. **`injection_present` non ha questo problema.** La sua etichetta è
+   sintetica e generabile offline (500 output con iniezioni piantate), quindi
+   è **l'unica chiave calibrabile subito**. Se serve un primo calibratore
+   vero, si parte da lì.
+
+Il resto del piano — architettura, 8 invarianti, metodi di estrazione,
+Platt/isotonica, policy di soglia — resta valido: era solido prima e lo
+resta. Cambia solo da dove arrivano i dati.
 
 ## Configurazione ed eventi spine
 
@@ -309,21 +388,34 @@ I test delle invarianti vengono prima di tutto il resto: se uno fallisce, Gauge 
 
 Il cancello più importante è F2→F3: in shadow, tra i casi che Gauge avrebbe saltato, i FAIL reali devono restare sotto il 2%. Tutte le soglie sono proposte da discutere; in ogni cancello anche tutti i guard test devono essere verdi.
 
-| Cancello | Metrica | Soglia proposta | Dove si misura |
-| --- | --- | --- | --- |
-| F0 → F1 | Esempi per chiave | ≥ 200, con ≥ 30 per classe | Inventario storico |
-| F1 → F2 | AUROC su `claim_supported` | ≥ 0,80 | Validazione temporale |
-| F1 → F2 | ECE dopo calibrazione | ≤ 0,05 | Validazione temporale |
-| F1 → F2 | Latenza p95 | ≤ 5 s | Replay |
-| F1 → F2 | Costo per decisione | ≤ 10% del costo medio di un verify tentacle | Replay e log storici |
-| F2 → F3 | FAIL tra i casi che avrebbe saltato (limite di Wilson) | ≤ 2% su ≥ 300 decisioni | Shadow in produzione |
-| F2 → F3 | Copertura, cioè quota di casi saltabili | ≥ 30% | Shadow in produzione |
-| F2 → F3 | Richiamo `injection_present` / falsi positivi | ≥ 95% / ≤ 2% | Set sintetico e output reali |
-| F3 → F4 | Etichette per ogni nuova domanda | ≥ 200, poi stessi criteri di F1 | Etichettatura manuale |
+| Cancello | Metrica | Soglia proposta | Dove si misura | Esito @ 2.65.0 |
+| --- | --- | --- | --- | --- |
+| F0 → F1 | Esempi per chiave | ≥ 200, con ≥ 30 per classe | `npm run gauge:inventory` | **NO-GO** — 4 |
+| F0b | Label nuove per settimana | da misurare, poi soglia | `gauge:inventory` periodico | da avviare |
+| F1 → F2 | AUROC su `claim_supported` | ≥ 0,80 | Validazione temporale su dati F2 | non applicabile prima di F2 |
+| F1 → F2 | ECE dopo calibrazione | ≤ 0,05 | Validazione temporale su dati F2 | non applicabile prima di F2 |
+| F1 → F2 | Latenza p95 | ≤ 5 s | Replay | misurabile già sullo storico |
+| F1 → F2 | Costo per decisione | ≤ 10% del costo medio di un verify tentacle | Replay e log storici | misurabile già sullo storico |
+| F2 → F3 | FAIL tra i casi che avrebbe saltato (limite di Wilson) | ≤ 2% su ≥ 300 decisioni | Shadow in produzione | — |
+| F2 → F3 | Copertura, cioè quota di casi saltabili | ≥ 30% | Shadow in produzione | — |
+| F2 → F3 | Richiamo `injection_present` / falsi positivi | ≥ 95% / ≤ 2% | Set sintetico e output reali | calibrabile **subito**, etichette sintetiche |
+| F3 → F4 | Etichette per ogni nuova domanda | ≥ 200, poi stessi criteri di F1 | Etichettatura manuale | — |
+
+L'unica riga di questa tabella oggi decidibile con i dati esistenti è la
+prima, ed è **NO-GO**. L'ultima riga resterebbe soddisfacibile subito, ma
+richiede il set sintetico (500 output con iniezioni piantate), che è lavoro
+offline e non storico.
 
 La soglia di AUROC è più bassa dello 0,886 riportato per Jev, perché usiamo modelli generici; se nessun candidato la raggiunge, il progetto si ferma a F1.
 
 Criterio di arresto in F3: se i FAIL scoperti dopo uno skip, tramite verifier successivi, `/undo` o `/rollback`, superano il 2% su una finestra mobile, Gauge torna da solo in shadow ed emette `gauge.calibrator.suspended`.
+
+> Nota sull'arresto: `/undo` e `/rollback` **non lasciano traccia sullo
+> spine** (nessun tipo di evento dedicato in `SESSION_EVENT_KINDS`), quindi
+> questo criterio non è oggi misurabile. Per chiuderlo serve un evento di
+> spine che registri l'undo/rollback, oppure la detection del FAIL passa
+> tutta da `gauge.outcome` sui verifier successivi. Da decidere prima di F2.
+
 
 ## Rischi e mitigazioni
 
@@ -343,19 +435,21 @@ Il rischio più sottile è il bias di selezione nei dati storici; la fase shadow
 
 ## Assunzioni da verificare nel codice
 
-Questo documento si basa su README, changelog e note di rilascio pubbliche, non sul codice sorgente. Questi punti vanno confermati prima di F0; i primi quattro decidono se le 900+ sessioni sono davvero utilizzabili.
+I primi cinque punti **sono stati verificati** in F0 (29 set 2026) e sono
+risolti. Gli altri restano aperti e vanno chiusi prima della fase che li usa.
 
-- [ ] Percorso e formato attuali delle sessioni JSONL. La 2.33 cita `~/.tmp/zelari-code/` come percorso legacy.
-- [ ] Da quale versione le sessioni contengono eventi `verification.*` sullo spine.
-- [ ] Come è rappresentata nel transcript una dichiarazione di completamento: evento dedicato o solo testo.
-- [ ] Se `/undo` e `/rollback` sono registrati nel transcript con un riferimento temporale.
-- [ ] Se i checkpoint conservano SHA sufficienti per ricostruire il diff al momento del "fatto", e il formato degli anchor `OBSERVATION ref=#N`.
+- [x] **Percorso e formato sessioni JSONL.** `resolveSessionsDir()` (`packages/core/src/session/store.ts:25`): `baseDir` > `ZELARI_SESSIONS_DIR` > `<workspaceRoot>/.zelari/sessions`. File `<sessionId>/events.jsonl`. Il percorso legacy `~/.tmp/zelari-code/` citato dalla 2.33 **non** è quello attivo: `~/.zelari-code/` è l'unificazione degli home.
+- [x] **Da quale versione esistono gli eventi `verification.*`.** Introdotti dalla **2.53**; `SESSION_EVENT_KINDS` li contiene oggi (`verification.run`, `verification.evidence`). Misurato: 112 run in 17 sessioni su 1099 — la maggior parte dello storico **precede** la fonte delle label.
+- [x] **Come è rappresentata una dichiarazione di completamento.** **Solo testo**: nessun tipo di evento dedicato in `SESSION_EVENT_KINDS` (insieme chiuso, 37 tipi). I 321 claim point sono turni `assistant.message` con forma dichiarativa. Conseguenza: il punto di "fatto" è sotto controllo dell'agente, e il diff al quel momento va ricostruito da `file.applied` / `file.read` (1199 eventi), non da un anchor.
+- [x] **Se `/undo` e `/rollback` sono registrati.** **No.** Nessun tipo di evento corrispondente; il FAIL implicito da undo/rollback **non è estraibile dallo spine**. La fonte è da aggiungere o da abbandonare.
+- [x] **Se i checkpoint conservano SHA.** `.zelari/checkpoint/` **non esiste** su questa macchina. Gli `OBSERVATION ref=#N` esistono (`verification.evidence`, 6 eventi, 2 soltanto con `ref` popolato). La ricostruzione del diff va dagli eventi `file.*`, non dai checkpoint.
 - [ ] Pattern di registrazione dei moduli in `packages/core/src/core/modules/`, sul modello di `runaway-guard`.
-- [ ] Come il routing dei verifier definisce la "famiglia" di un modello, per riusarla.
-- [ ] Se gli adapter dei provider possono passare `logprobs`, `top_logprobs` e schema JSON, e restituire i logprobs all'harness. Probabilmente serve un'estensione degli adapter.
+- [ ] Come il routing dei verifier definisce la "famiglia" di un modello, per riusarla. (Esiste già `ZELARI_KRAKEN_{EXPLORE,GENERAL,VERIFY}_MODEL` e il routing cross-family introdotto in 2.64: **da riusare, non da inventare**.)
+- [ ] Se gli adapter dei provider possono passare `logprobs`, `top_logprobs` e schema JSON, e restituire i logprobs all'harness. Probabilmente serve un'estensione degli adapter. **È il rischio tecnico più grosso di tutto Gauge**: senza logprobs si cadebbe su `verbalized`, che il doc stesso valuta a bassa affidabilità.
 - [ ] Dove vive lo store JSONL della reputazione dei modelli, per salvare accanto gli esiti di Gauge.
 - [ ] Se `assembleRequestMessages()` è riusabile per una chiamata non conversazionale.
-- [ ] Numero del prossimo ADR libero in `docs/decisions/` per la decisione su Gauge.
+- [x] **Numero del prossimo ADR libero** in `docs/decisions/`: `0040`.
+
 
 ## Riferimenti
 
